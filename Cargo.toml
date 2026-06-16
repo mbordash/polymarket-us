@@ -2,9 +2,11 @@
 name = "polymarket-us"
 version = "0.1.0"
 edition = "2021"
+authors = ["Michael Bordash <michaelbordash@gmail.com>"]
 description = "Unofficial Rust SDK for the Polymarket US Retail API"
 license = "MIT"
-repository = "https://github.com/mbordash/DRADIS"
+repository = "https://github.com/mbordash/polymarket-us"
+homepage = "https://github.com/mbordash/polymarket-us"
 readme = "README.md"
 keywords = ["polymarket", "sdk", "trading", "api"]
 categories = ["api-bindings", "finance"]
