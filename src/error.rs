@@ -21,9 +21,15 @@ pub enum PolymarketUsError {
     #[error(transparent)]
     Transport(#[from] reqwest::Error),
     #[error(transparent)]
-    WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+    WebSocket(Box<tokio_tungstenite::tungstenite::Error>),
     #[error(transparent)]
     Decode(#[from] serde_json::Error),
+}
+
+impl From<tokio_tungstenite::tungstenite::Error> for PolymarketUsError {
+    fn from(value: tokio_tungstenite::tungstenite::Error) -> Self {
+        Self::WebSocket(Box::new(value))
+    }
 }
 
 impl PolymarketUsError {

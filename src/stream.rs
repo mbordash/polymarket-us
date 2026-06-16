@@ -483,7 +483,7 @@ impl StreamRunner {
             }
 
             let payload = serde_json::to_string(&prepared)?;
-            websocket.send(Message::Text(payload.into())).await?;
+            websocket.send(Message::Text(payload)).await?;
         }
 
         Ok(())
@@ -719,3 +719,4 @@ mod tests {
         );
     }
 }
+
