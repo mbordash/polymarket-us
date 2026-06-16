@@ -6,6 +6,9 @@ Unofficial Rust SDK for the Polymarket US Retail API.
 
 - Ed25519 request signing for `X-PM-*` auth headers.
 - Typed async REST client for markets, orders, portfolio, and account endpoints.
+- Async WebSocket stream client with subscription helpers for market and order feeds.
+- Built-in `responsesDebounced` toggling for active book-style subscriptions.
+- Automatic reconnect/backoff loop with tracking ID propagation.
 - Builder-based configuration for base URLs, timeouts, and custom `reqwest::Client`.
 - Error mapping for common HTTP status classes.
 
@@ -95,6 +98,32 @@ async fn load_filtered_markets(client: &PolymarketUsClient) -> anyhow::Result<()
 
 If your account tier requires authenticated market access for some filters, use `markets_list_authenticated_with_query(...)` with the same query struct.
 
+## Streaming market data
+
+The crate now exposes an async WebSocket client via `client.streaming()`. It handles handshake signing, subscription frames, reconnects, and basic event parsing.
+
+```rust
+use polymarket_us::{PolymarketUsClient, StreamConnectConfig, StreamSubscription};
+
+async fn watch_market(client: &PolymarketUsClient) -> anyhow::Result<()> {
+    let stream_client = client.streaming();
+    let config = StreamConnectConfig::default().with_responses_debounced(true);
+
+    let mut stream = stream_client
+        .connect_with_config(
+            vec![StreamSubscription::market_data_lite("BTC-USD")],
+            config,
+        )
+        .await?;
+
+    while let Some(message) = stream.next().await {
+        println!("stream event: {message:?}");
+    }
+
+    Ok(())
+}
+```
+
 ## Endpoint coverage
 
 Public:
@@ -158,9 +187,9 @@ async fn check_health(client: &PolymarketUsClient) {
 
 ## Roadmap
 
-- [ ] WebSocket support for real-time market data subscriptions.
-- [ ] WebSocket user streams for order/fill updates.
-- [ ] Reconnect and backoff helpers for long-running stream consumers.
+- [x] WebSocket support for real-time market data subscriptions.
+- [x] WebSocket user streams for order/fill updates.
+- [x] Reconnect and backoff helpers for long-running stream consumers.
 
 ## Acknowledgements
 

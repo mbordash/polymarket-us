@@ -4,6 +4,8 @@ use thiserror::Error;
 pub enum PolymarketUsError {
     #[error("authentication required for endpoint {0}")]
     MissingAuth(&'static str),
+    #[error("invalid stream configuration: {0}")]
+    InvalidStreamConfig(String),
     #[error("bad request: {0}")]
     BadRequest(String),
     #[error("authentication failed: {0}")]
@@ -18,6 +20,8 @@ pub enum PolymarketUsError {
     Api { status: u16, message: String },
     #[error(transparent)]
     Transport(#[from] reqwest::Error),
+    #[error(transparent)]
+    WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
     #[error(transparent)]
     Decode(#[from] serde_json::Error),
 }
