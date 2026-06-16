@@ -275,4 +275,3 @@ pub struct GetOpenOrdersResponse {
     #[serde(default)]
     pub orders: Vec<PlaceOrderResponse>,
 }
-

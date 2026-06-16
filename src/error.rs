@@ -30,8 +30,10 @@ impl PolymarketUsError {
             404 => Self::NotFound(message),
             429 => Self::RateLimited(message),
             500 | 502 | 503 | 504 => Self::Server(message),
-            code => Self::Api { status: code, message },
+            code => Self::Api {
+                status: code,
+                message,
+            },
         }
     }
 }
-

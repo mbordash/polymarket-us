@@ -59,11 +59,41 @@ async fn main() -> anyhow::Result<()> {
     let health = client.health().await?;
     println!("gateway status: {}", health.status);
 
-    let markets = client.markets_list::<()>(None).await?;
+    let markets = client.markets_list().await?;
     println!("markets returned: {}", markets.markets.len());
     Ok(())
 }
 ```
+
+## Advanced market queries
+
+Use `markets_list()` for the default market feed. Use `markets_list_with_query(...)` when you need filters, cursors, or pagination parameters.
+
+```rust
+use polymarket_us::PolymarketUsClient;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct MarketsQuery<'a> {
+    category: Option<&'a str>,
+    limit: Option<u32>,
+    cursor: Option<&'a str>,
+}
+
+async fn load_filtered_markets(client: &PolymarketUsClient) -> anyhow::Result<()> {
+    let query = MarketsQuery {
+        category: Some("politics"),
+        limit: Some(25),
+        cursor: None,
+    };
+
+    let page = client.markets_list_with_query(Some(&query)).await?;
+    println!("filtered markets: {}", page.markets.len());
+    Ok(())
+}
+```
+
+If your account tier requires authenticated market access for some filters, use `markets_list_authenticated_with_query(...)` with the same query struct.
 
 ## Endpoint coverage
 
@@ -72,6 +102,8 @@ Public:
 - `health`
 - `markets_list`
 - `markets_list_authenticated`
+- `markets_list_with_query`
+- `markets_list_authenticated_with_query`
 
 Account / portfolio:
 

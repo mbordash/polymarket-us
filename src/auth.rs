@@ -17,10 +17,9 @@ pub struct UsAuth {
 
 impl UsAuth {
     pub fn from_env() -> Result<Self> {
-        let key_id = std::env::var(ENV_KEY_ID)
-            .with_context(|| format!("{ENV_KEY_ID} not set"))?;
-        let secret_b64 = std::env::var(ENV_SECRET_KEY)
-            .with_context(|| format!("{ENV_SECRET_KEY} not set"))?;
+        let key_id = std::env::var(ENV_KEY_ID).with_context(|| format!("{ENV_KEY_ID} not set"))?;
+        let secret_b64 =
+            std::env::var(ENV_SECRET_KEY).with_context(|| format!("{ENV_SECRET_KEY} not set"))?;
         Self::from_parts(key_id, &secret_b64)
     }
 
@@ -45,7 +44,10 @@ impl UsAuth {
             }
         };
 
-        Ok(Self { key_id, signing_key })
+        Ok(Self {
+            key_id,
+            signing_key,
+        })
     }
 
     pub fn key_id(&self) -> &str {
@@ -101,4 +103,3 @@ mod tests {
         assert!(vk.verify(payload.as_bytes(), &sig).is_ok());
     }
 }
-

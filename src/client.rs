@@ -107,7 +107,11 @@ impl PolymarketUsClient {
             .await
     }
 
-    pub async fn markets_list<Q: Serialize>(
+    pub async fn markets_list(&self) -> Result<types::MarketsResponse, PolymarketUsError> {
+        self.markets_list_with_query::<()>(None).await
+    }
+
+    pub async fn markets_list_with_query<Q: Serialize>(
         &self,
         query: Option<&Q>,
     ) -> Result<types::MarketsResponse, PolymarketUsError> {
@@ -115,7 +119,13 @@ impl PolymarketUsClient {
             .await
     }
 
-    pub async fn markets_list_authenticated<Q: Serialize>(
+    pub async fn markets_list_authenticated(
+        &self,
+    ) -> Result<types::MarketsResponse, PolymarketUsError> {
+        self.markets_list_authenticated_with_query::<()>(None).await
+    }
+
+    pub async fn markets_list_authenticated_with_query<Q: Serialize>(
         &self,
         query: Option<&Q>,
     ) -> Result<types::MarketsResponse, PolymarketUsError> {
@@ -123,7 +133,9 @@ impl PolymarketUsClient {
             .await
     }
 
-    pub async fn account_balances(&self) -> Result<types::AccountBalancesResponse, PolymarketUsError> {
+    pub async fn account_balances(
+        &self,
+    ) -> Result<types::AccountBalancesResponse, PolymarketUsError> {
         self.request::<(), (), types::AccountBalancesResponse>(
             Method::GET,
             "/v1/account/balances",
@@ -165,16 +177,28 @@ impl PolymarketUsClient {
         &self,
         body: &types::PlaceOrderRequest,
     ) -> Result<types::PlaceOrderResponse, PolymarketUsError> {
-        self.request(Method::POST, "/v1/trading/orders", None::<&()>, Some(body), true)
-            .await
+        self.request(
+            Method::POST,
+            "/v1/trading/orders",
+            None::<&()>,
+            Some(body),
+            true,
+        )
+        .await
     }
 
     pub async fn place_batched_orders(
         &self,
         body: &types::BatchedOrderRequest,
     ) -> Result<types::BatchedOrderResponse, PolymarketUsError> {
-        self.request(Method::POST, "/v1/orders/batched", None::<&()>, Some(body), true)
-            .await
+        self.request(
+            Method::POST,
+            "/v1/orders/batched",
+            None::<&()>,
+            Some(body),
+            true,
+        )
+        .await
     }
 
     pub async fn cancel_trading_order(
@@ -259,24 +283,42 @@ impl PolymarketUsClient {
         &self,
         body: &types::CancelAllOrdersParams,
     ) -> Result<types::CancelAllOrdersResponse, PolymarketUsError> {
-        self.request(Method::POST, "/v1/orders/open/cancel", None::<&()>, Some(body), true)
-            .await
+        self.request(
+            Method::POST,
+            "/v1/orders/open/cancel",
+            None::<&()>,
+            Some(body),
+            true,
+        )
+        .await
     }
 
     pub async fn order_preview(
         &self,
         body: &types::PreviewOrderRequest,
     ) -> Result<types::PreviewOrderResponse, PolymarketUsError> {
-        self.request(Method::POST, "/v1/order/preview", None::<&()>, Some(body), true)
-            .await
+        self.request(
+            Method::POST,
+            "/v1/order/preview",
+            None::<&()>,
+            Some(body),
+            true,
+        )
+        .await
     }
 
     pub async fn order_close_position(
         &self,
         body: &types::ClosePositionRequest,
     ) -> Result<types::ClosePositionResponse, PolymarketUsError> {
-        self.request(Method::POST, "/v1/order/close-position", None::<&()>, Some(body), true)
-            .await
+        self.request(
+            Method::POST,
+            "/v1/order/close-position",
+            None::<&()>,
+            Some(body),
+            true,
+        )
+        .await
     }
 
     async fn request<Q: Serialize, B: Serialize, T: DeserializeOwned>(
@@ -294,7 +336,10 @@ impl PolymarketUsClient {
         };
         let url = format!("{}{}", base, path);
 
-        let mut rb = self.http.request(method.clone(), &url).header("Content-Type", "application/json");
+        let mut rb = self
+            .http
+            .request(method.clone(), &url)
+            .header("Content-Type", "application/json");
         if let Some(query) = query {
             rb = rb.query(query);
         }
@@ -334,7 +379,11 @@ fn extract_error_message(text: &str) -> Option<String> {
     json.get("message")
         .and_then(|v| v.as_str())
         .map(ToOwned::to_owned)
-        .or_else(|| json.get("error").and_then(|v| v.as_str()).map(ToOwned::to_owned))
+        .or_else(|| {
+            json.get("error")
+                .and_then(|v| v.as_str())
+                .map(ToOwned::to_owned)
+        })
 }
 
 #[cfg(test)]
@@ -347,6 +396,3 @@ mod tests {
         assert_eq!(client.api_base_url(), "https://api.polymarket.us");
     }
 }
-
-
-
