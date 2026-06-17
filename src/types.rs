@@ -275,3 +275,93 @@ pub struct GetOpenOrdersResponse {
     #[serde(default)]
     pub orders: Vec<PlaceOrderResponse>,
 }
+
+// Events
+#[derive(Debug, Clone, Deserialize)]
+pub struct EventsResponse {
+    #[serde(default)]
+    pub events: Vec<UsEvent>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UsEvent {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub start_date: Option<String>,
+    #[serde(default)]
+    pub end_date: Option<String>,
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+// Market data helpers
+#[derive(Debug, Clone, Deserialize)]
+pub struct OrderBook {
+    #[serde(default)]
+    pub bids: Vec<PriceLevel>,
+    #[serde(default)]
+    pub asks: Vec<PriceLevel>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PriceLevel {
+    pub price: String,
+    pub quantity: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BestBidOffer {
+    #[serde(default)]
+    pub bid: Option<PriceLevel>,
+    #[serde(default)]
+    pub ask: Option<PriceLevel>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SettlementPrice {
+    #[serde(default)]
+    pub symbol: String,
+    #[serde(default)]
+    pub price: String,
+    #[serde(default)]
+    pub timestamp: String,
+}
+
+// Search
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchResults {
+    #[serde(default)]
+    pub markets: Vec<UsMarket>,
+    #[serde(default)]
+    pub events: Vec<UsEvent>,
+}
+
+// Series and Sports (placeholder for expansion)
+#[derive(Debug, Clone, Deserialize)]
+pub struct League {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub sport: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Team {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub league_id: Option<String>,
+}

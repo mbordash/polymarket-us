@@ -1,5 +1,8 @@
 use crate::auth::UsAuth;
 use crate::error::PolymarketUsError;
+use crate::resources::{
+    AccountClient, EventsClient, MarketsClient, OrdersClient, PortfolioClient, SearchClient,
+};
 use crate::types;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -102,226 +105,194 @@ impl PolymarketUsClient {
         &self.api_base_url
     }
 
+    // ========================================================================
+    // Resource Access
+    // ========================================================================
+
+    /// Access markets resource (discovery, order book, pricing)
+    pub fn markets(&self) -> MarketsClient<'_> {
+        MarketsClient::new(self)
+    }
+
+    /// Access events resource
+    pub fn events(&self) -> EventsClient<'_> {
+        EventsClient::new(self)
+    }
+
+    /// Access orders resource (lifecycle management)
+    pub fn orders(&self) -> OrdersClient<'_> {
+        OrdersClient::new(self)
+    }
+
+    /// Access account resource (balances, buying power)
+    pub fn account(&self) -> AccountClient<'_> {
+        AccountClient::new(self)
+    }
+
+    /// Access portfolio resource (positions, activity)
+    pub fn portfolio(&self) -> PortfolioClient<'_> {
+        PortfolioClient::new(self)
+    }
+
+    /// Access search resource (full-text search)
+    pub fn search(&self) -> SearchClient<'_> {
+        SearchClient::new(self)
+    }
+
     pub async fn health(&self) -> Result<types::HealthResponse, PolymarketUsError> {
-        self.request::<(), (), types::HealthResponse>(Method::GET, "/v1/health", None, None, false)
+        self.internal_request::<(), (), types::HealthResponse>(Method::GET, "/v1/health", None, None, false)
             .await
     }
 
+    // ========================================================================
+    // Deprecated: Use resource clients instead (e.g., client.markets().list())
+    // ========================================================================
+
+    #[deprecated(since = "0.3.0", note = "use client.markets().list() instead")]
     pub async fn markets_list(&self) -> Result<types::MarketsResponse, PolymarketUsError> {
-        self.markets_list_with_query::<()>(None).await
+        self.markets().list().await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.markets().list_with_query() instead")]
     pub async fn markets_list_with_query<Q: Serialize>(
         &self,
         query: Option<&Q>,
     ) -> Result<types::MarketsResponse, PolymarketUsError> {
-        self.request(Method::GET, "/v1/markets", query, None::<&()>, false)
-            .await
+        self.markets().list_with_query(query).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.markets().list_authenticated() instead")]
     pub async fn markets_list_authenticated(
         &self,
     ) -> Result<types::MarketsResponse, PolymarketUsError> {
-        self.markets_list_authenticated_with_query::<()>(None).await
+        self.markets().list_authenticated().await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.markets().list_authenticated_with_query() instead")]
     pub async fn markets_list_authenticated_with_query<Q: Serialize>(
         &self,
         query: Option<&Q>,
     ) -> Result<types::MarketsResponse, PolymarketUsError> {
-        self.request(Method::GET, "/v1/markets", query, None::<&()>, true)
-            .await
+        self.markets().list_authenticated_with_query(query).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.account().balances() instead")]
     pub async fn account_balances(
         &self,
     ) -> Result<types::AccountBalancesResponse, PolymarketUsError> {
-        self.request::<(), (), types::AccountBalancesResponse>(
-            Method::GET,
-            "/v1/account/balances",
-            None,
-            None,
-            true,
-        )
-        .await
+        self.account().balances().await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.portfolio().positions() instead")]
     pub async fn portfolio_positions(
         &self,
     ) -> Result<types::PortfolioPositionsResponse, PolymarketUsError> {
-        self.request::<(), (), types::PortfolioPositionsResponse>(
-            Method::GET,
-            "/v1/portfolio/positions",
-            None,
-            None,
-            true,
-        )
-        .await
+        self.portfolio().positions().await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.portfolio().activities() instead")]
     pub async fn portfolio_activities<Q: Serialize>(
         &self,
         query: Option<&Q>,
     ) -> Result<types::PortfolioActivitiesResponse, PolymarketUsError> {
-        self.request(
-            Method::GET,
-            "/v1/portfolio/activities",
-            query,
-            None::<&()>,
-            true,
-        )
-        .await
+        self.portfolio().activities(query).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().place() instead")]
     pub async fn place_order(
         &self,
         body: &types::PlaceOrderRequest,
     ) -> Result<types::PlaceOrderResponse, PolymarketUsError> {
-        self.request(
-            Method::POST,
-            "/v1/trading/orders",
-            None::<&()>,
-            Some(body),
-            true,
-        )
-        .await
+        self.orders().place(body).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().place_batch() instead")]
     pub async fn place_batched_orders(
         &self,
         body: &types::BatchedOrderRequest,
     ) -> Result<types::BatchedOrderResponse, PolymarketUsError> {
-        self.request(
-            Method::POST,
-            "/v1/orders/batched",
-            None::<&()>,
-            Some(body),
-            true,
-        )
-        .await
+        self.orders().place_batch(body).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().cancel_trading() instead")]
     pub async fn cancel_trading_order(
         &self,
         order_id: &str,
     ) -> Result<types::CancelOrderResponse, PolymarketUsError> {
-        self.request::<(), (), types::CancelOrderResponse>(
-            Method::DELETE,
-            &format!("/v1/trading/orders/{order_id}"),
-            None,
-            None,
-            true,
-        )
-        .await
+        self.orders().cancel_trading(order_id).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().create() instead")]
     pub async fn orders_create(
         &self,
         body: &types::PlaceOrderRequest,
     ) -> Result<types::PlaceOrderResponse, PolymarketUsError> {
-        self.request(Method::POST, "/v1/orders", None::<&()>, Some(body), true)
-            .await
+        self.orders().create(body).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().open() instead")]
     pub async fn orders_open<Q: Serialize>(
         &self,
         query: Option<&Q>,
     ) -> Result<types::GetOpenOrdersResponse, PolymarketUsError> {
-        self.request(Method::GET, "/v1/orders/open", query, None::<&()>, true)
-            .await
+        self.orders().open(query).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().retrieve() instead")]
     pub async fn order_retrieve(
         &self,
         order_id: &str,
     ) -> Result<types::PlaceOrderResponse, PolymarketUsError> {
-        self.request::<(), (), types::PlaceOrderResponse>(
-            Method::GET,
-            &format!("/v1/order/{order_id}"),
-            None,
-            None,
-            true,
-        )
-        .await
+        self.orders().retrieve(order_id).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().cancel() instead")]
     pub async fn order_cancel(
         &self,
         order_id: &str,
         body: &types::CancelOrderParams,
     ) -> Result<(), PolymarketUsError> {
-        let _: serde_json::Value = self
-            .request(
-                Method::POST,
-                &format!("/v1/order/{order_id}/cancel"),
-                None::<&()>,
-                Some(body),
-                true,
-            )
-            .await?;
-        Ok(())
+        self.orders().cancel(order_id, body).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().modify() instead")]
     pub async fn order_modify(
         &self,
         order_id: &str,
         body: &types::ModifyOrderRequest,
     ) -> Result<(), PolymarketUsError> {
-        let _: serde_json::Value = self
-            .request(
-                Method::POST,
-                &format!("/v1/order/{order_id}/modify"),
-                None::<&()>,
-                Some(body),
-                true,
-            )
-            .await?;
-        Ok(())
+        self.orders().modify(order_id, body).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().cancel_all() instead")]
     pub async fn orders_cancel_all(
         &self,
         body: &types::CancelAllOrdersParams,
     ) -> Result<types::CancelAllOrdersResponse, PolymarketUsError> {
-        self.request(
-            Method::POST,
-            "/v1/orders/open/cancel",
-            None::<&()>,
-            Some(body),
-            true,
-        )
-        .await
+        self.orders().cancel_all(body).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().preview() instead")]
     pub async fn order_preview(
         &self,
         body: &types::PreviewOrderRequest,
     ) -> Result<types::PreviewOrderResponse, PolymarketUsError> {
-        self.request(
-            Method::POST,
-            "/v1/order/preview",
-            None::<&()>,
-            Some(body),
-            true,
-        )
-        .await
+        self.orders().preview(body).await
     }
 
+    #[deprecated(since = "0.3.0", note = "use client.orders().close_position() instead")]
     pub async fn order_close_position(
         &self,
         body: &types::ClosePositionRequest,
     ) -> Result<types::ClosePositionResponse, PolymarketUsError> {
-        self.request(
-            Method::POST,
-            "/v1/order/close-position",
-            None::<&()>,
-            Some(body),
-            true,
-        )
-        .await
+        self.orders().close_position(body).await
     }
 
-    async fn request<Q: Serialize, B: Serialize, T: DeserializeOwned>(
+    // ========================================================================
+    // Internal Request Method
+    // ========================================================================
+
+    pub(crate) async fn internal_request<Q: Serialize, B: Serialize, T: DeserializeOwned>(
         &self,
         method: Method,
         path: &str,
