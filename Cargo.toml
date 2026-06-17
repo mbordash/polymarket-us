@@ -1,6 +1,6 @@
 [package]
 name = "polymarket-us"
-version = "0.3.0"
+version = "0.3.2"
 edition = "2021"
 authors = ["Michael Bordash <michaelbordash@gmail.com>"]
 description = "Unofficial Rust SDK for the Polymarket US Retail API"
