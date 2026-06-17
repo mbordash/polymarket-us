@@ -12,8 +12,12 @@ pub enum PolymarketUsError {
     Authentication(String),
     #[error("resource not found: {0}")]
     NotFound(String),
-    #[error("rate limit exceeded: {0}")]
-    RateLimited(String),
+    #[error("rate limit exceeded: {message}")]
+    RateLimited {
+        message: String,
+        /// Server-supplied `Retry-After` delay, if present in the response headers.
+        retry_after: Option<std::time::Duration>,
+    },
     #[error("internal server error: {0}")]
     Server(String),
     #[error("api error {status}: {message}")]
@@ -38,7 +42,10 @@ impl PolymarketUsError {
             400 => Self::BadRequest(message),
             401 => Self::Authentication(message),
             404 => Self::NotFound(message),
-            429 => Self::RateLimited(message),
+            429 => Self::RateLimited {
+                message,
+                retry_after: None,
+            },
             500 | 502 | 503 | 504 => Self::Server(message),
             code => Self::Api {
                 status: code,

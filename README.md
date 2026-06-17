@@ -1,5 +1,11 @@
 # polymarket-us
 
+[![Crates.io](https://img.shields.io/crates/v/polymarket-us.svg)](https://crates.io/crates/polymarket-us)
+[![Docs.rs](https://docs.rs/polymarket-us/badge.svg)](https://docs.rs/polymarket-us)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org)
+[![CI](https://github.com/mbordash/polymarket-us/actions/workflows/ci.yml/badge.svg)](https://github.com/mbordash/polymarket-us/actions/workflows/ci.yml)
+
 Unofficial Rust SDK for the Polymarket US Retail API.
 
 ## Features
@@ -320,12 +326,90 @@ use polymarket_us::{PolymarketUsClient, PolymarketUsError};
 async fn check_health(client: &PolymarketUsClient) {
     match client.health().await {
         Ok(h) => println!("ok: {}", h.status),
-        Err(PolymarketUsError::RateLimited(msg)) => eprintln!("rate limited: {msg}"),
+        Err(PolymarketUsError::RateLimited { message, retry_after }) => {
+            if let Some(d) = retry_after {
+                eprintln!("rate limited (retry in {}s): {message}", d.as_secs());
+            } else {
+                eprintln!("rate limited: {message}");
+            }
+        }
         Err(PolymarketUsError::Authentication(msg)) => eprintln!("auth failed: {msg}"),
         Err(e) => eprintln!("request failed: {e}"),
     }
 }
 ```
+
+## Retries, Correlation IDs, and Rate Limits
+
+### Automatic Retries
+
+`GET` and `DELETE` requests are automatically retried with exponential backoff and jitter.
+`POST` requests (order creation, placement, etc.) are **never** retried automatically to
+prevent duplicate submissions.
+
+```rust
+use polymarket_us::{PolymarketUsClient, RetryConfig};
+use std::time::Duration;
+
+// Default: 3 retries, 200ms initial backoff, 10s cap, 25% jitter
+let client = PolymarketUsClient::builder().build()?;
+
+// Aggressive retry for high-availability workflows
+let client = PolymarketUsClient::builder()
+    .retry(RetryConfig::aggressive())
+    .build()?;
+
+// Disable retries entirely
+let client = PolymarketUsClient::builder()
+    .retry(RetryConfig::none())
+    .build()?;
+
+// Fine-grained control
+let client = PolymarketUsClient::builder()
+    .retry(RetryConfig {
+        max_retries: 5,
+        initial_backoff: Duration::from_millis(100),
+        max_backoff: Duration::from_secs(30),
+        jitter_factor: 0.3,
+    })
+    .build()?;
+```
+
+Retries occur on:
+- HTTP 429 (respects `Retry-After` header if present)
+- HTTP 500, 502, 503, 504
+- Transport-level errors (connection refused, timeout)
+
+### Correlation IDs
+
+Every request automatically includes an `X-Correlation-ID` header (`pmrs-{uuid_v4}`) for
+tracing requests across your logs and Polymarket support conversations.
+
+```rust
+// Custom prefix — useful to distinguish SDK requests by service/environment
+let client = PolymarketUsClient::builder()
+    .correlation_id_prefix("my-service-prod")
+    .build()?;
+// Sends: X-Correlation-ID: my-service-prod-550e8400-e29b-41d4-a716-446655440000
+```
+
+### Rate Limit Awareness
+
+When Polymarket returns a `429`, the `Retry-After` header is parsed and surfaced in the
+`RateLimited` error variant so your application can react precisely:
+
+```rust
+match client.markets().list().await {
+    Err(PolymarketUsError::RateLimited { retry_after: Some(d), .. }) => {
+        println!("backing off for {}s", d.as_secs());
+        tokio::time::sleep(d).await;
+    }
+    _ => {}
+}
+```
+
+For idempotent endpoints, the SDK already honours this automatically — the `Retry-After`
+duration is used directly instead of the configured backoff.
 
 ## Testing
 

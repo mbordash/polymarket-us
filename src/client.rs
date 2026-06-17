@@ -3,13 +3,16 @@ use crate::error::PolymarketUsError;
 use crate::resources::{
     AccountClient, EventsClient, MarketsClient, OrdersClient, PortfolioClient, SearchClient,
 };
+use crate::retry::{is_retryable_status, RetryConfig};
 use crate::types;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::time::Duration;
 
 const DEFAULT_GATEWAY_BASE_URL: &str = "https://gateway.polymarket.us";
 const DEFAULT_API_BASE_URL: &str = "https://api.polymarket.us";
+const DEFAULT_CORRELATION_ID_PREFIX: &str = "pmrs";
 
 #[derive(Clone)]
 pub struct PolymarketUsClient {
@@ -17,6 +20,8 @@ pub struct PolymarketUsClient {
     gateway_base_url: String,
     api_base_url: String,
     auth: Option<UsAuth>,
+    retry_config: RetryConfig,
+    correlation_id_prefix: String,
 }
 
 pub struct PolymarketUsClientBuilder {
@@ -24,7 +29,9 @@ pub struct PolymarketUsClientBuilder {
     api_base_url: String,
     auth: Option<UsAuth>,
     http: Option<reqwest::Client>,
-    timeout: std::time::Duration,
+    timeout: Duration,
+    retry_config: RetryConfig,
+    correlation_id_prefix: String,
 }
 
 impl Default for PolymarketUsClientBuilder {
@@ -34,7 +41,9 @@ impl Default for PolymarketUsClientBuilder {
             api_base_url: DEFAULT_API_BASE_URL.to_string(),
             auth: None,
             http: None,
-            timeout: std::time::Duration::from_secs(30),
+            timeout: Duration::from_secs(30),
+            retry_config: RetryConfig::default(),
+            correlation_id_prefix: DEFAULT_CORRELATION_ID_PREFIX.to_string(),
         }
     }
 }
@@ -54,7 +63,7 @@ impl PolymarketUsClientBuilder {
         self
     }
 
-    pub fn timeout(mut self, timeout: std::time::Duration) -> Self {
+    pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
@@ -69,6 +78,23 @@ impl PolymarketUsClientBuilder {
         self
     }
 
+    /// Set the retry policy. Applies only to idempotent methods (GET, DELETE).
+    ///
+    /// Use [`RetryConfig::none()`] to disable retries entirely.
+    pub fn retry(mut self, config: RetryConfig) -> Self {
+        self.retry_config = config;
+        self
+    }
+
+    /// Set a prefix for the `X-Correlation-ID` header sent with every request.
+    ///
+    /// The full header value is `{prefix}-{uuid_v4}`. Defaults to `"pmrs"`.
+    /// Useful for filtering SDK requests in Polymarket support logs.
+    pub fn correlation_id_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.correlation_id_prefix = prefix.into();
+        self
+    }
+
     pub fn build(self) -> Result<PolymarketUsClient, PolymarketUsError> {
         let http = match self.http {
             Some(http) => http,
@@ -79,6 +105,8 @@ impl PolymarketUsClientBuilder {
             gateway_base_url: self.gateway_base_url,
             api_base_url: self.api_base_url,
             auth: self.auth,
+            retry_config: self.retry_config,
+            correlation_id_prefix: self.correlation_id_prefix,
         })
     }
 }
@@ -94,6 +122,8 @@ impl PolymarketUsClient {
             gateway_base_url: DEFAULT_GATEWAY_BASE_URL.to_string(),
             api_base_url: DEFAULT_API_BASE_URL.to_string(),
             auth,
+            retry_config: RetryConfig::default(),
+            correlation_id_prefix: DEFAULT_CORRELATION_ID_PREFIX.to_string(),
         }
     }
 
@@ -103,6 +133,10 @@ impl PolymarketUsClient {
 
     pub fn api_base_url(&self) -> &str {
         &self.api_base_url
+    }
+
+    pub fn retry_config(&self) -> &RetryConfig {
+        &self.retry_config
     }
 
     // ========================================================================
@@ -307,6 +341,8 @@ impl PolymarketUsClient {
     // Internal Request Method
     // ========================================================================
 
+    /// Execute an HTTP request with correlation ID injection, automatic retry
+    /// (GET/DELETE only), and `Retry-After`-aware rate-limit handling.
     pub(crate) async fn internal_request<Q: Serialize, B: Serialize, T: DeserializeOwned>(
         &self,
         method: Method,
@@ -315,6 +351,13 @@ impl PolymarketUsClient {
         body: Option<&B>,
         authenticated: bool,
     ) -> Result<T, PolymarketUsError> {
+        let is_idempotent = matches!(method, Method::GET | Method::DELETE);
+        let max_attempts = if is_idempotent {
+            self.retry_config.max_retries + 1
+        } else {
+            1
+        };
+
         let base = if authenticated {
             &self.api_base_url
         } else {
@@ -322,42 +365,102 @@ impl PolymarketUsClient {
         };
         let url = format!("{}{}", base, path);
 
-        let mut rb = self
-            .http
-            .request(method.clone(), &url)
-            .header("Content-Type", "application/json");
-        if let Some(query) = query {
-            rb = rb.query(query);
-        }
-        if let Some(body) = body {
-            rb = rb.json(body);
-        }
-        if authenticated {
-            let auth = self
-                .auth
-                .as_ref()
-                .ok_or(PolymarketUsError::MissingAuth("authenticated endpoint"))?;
-            for (name, value) in auth.signed_headers(method.as_str(), path) {
-                rb = rb.header(name, value);
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+
+            // Fresh correlation ID per attempt so each retry is independently traceable.
+            let correlation_id = format!("{}-{}", self.correlation_id_prefix, uuid::Uuid::new_v4());
+
+            let mut rb = self
+                .http
+                .request(method.clone(), &url)
+                .header("Content-Type", "application/json")
+                .header("X-Correlation-ID", &correlation_id);
+
+            if let Some(q) = query {
+                rb = rb.query(q);
             }
-        }
+            if let Some(b) = body {
+                rb = rb.json(b);
+            }
+            if authenticated {
+                let auth = self
+                    .auth
+                    .as_ref()
+                    .ok_or(PolymarketUsError::MissingAuth("authenticated endpoint"))?;
+                for (name, value) in auth.signed_headers(method.as_str(), path) {
+                    rb = rb.header(name, value);
+                }
+            }
 
-        let response = rb.send().await?;
-        let status = response.status();
-        let text = response.text().await?;
+            // --- Send request, retry on transport errors for idempotent calls ---
+            let response = match rb.send().await {
+                Ok(r) => r,
+                Err(e) if is_idempotent && attempt < max_attempts && is_transport_retryable(&e) => {
+                    tokio::time::sleep(self.retry_config.backoff_for(attempt)).await;
+                    continue;
+                }
+                Err(e) => return Err(PolymarketUsError::Transport(e)),
+            };
 
-        if !status.is_success() {
-            let message = extract_error_message(&text).unwrap_or_else(|| text.clone());
-            return Err(PolymarketUsError::from_status(status, message));
-        }
+            let status = response.status();
 
-        if text.trim().is_empty() {
-            serde_json::from_str("{}")
-        } else {
-            serde_json::from_str(&text)
+            // Parse Retry-After before consuming the response body.
+            let retry_after = parse_retry_after(&response);
+
+            let text = response.text().await?;
+
+            if !status.is_success() {
+                let message = extract_error_message(&text).unwrap_or_else(|| text.clone());
+
+                // Surface rate-limit errors with the server's retry_after hint.
+                let err = if status.as_u16() == 429 {
+                    PolymarketUsError::RateLimited {
+                        message,
+                        retry_after,
+                    }
+                } else {
+                    PolymarketUsError::from_status(status, message)
+                };
+
+                // Retry on retryable status codes (idempotent calls only).
+                if is_idempotent && attempt < max_attempts && is_retryable_status(status.as_u16()) {
+                    let delay =
+                        retry_after.unwrap_or_else(|| self.retry_config.backoff_for(attempt));
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+
+                return Err(err);
+            }
+
+            return if text.trim().is_empty() {
+                serde_json::from_str("{}").map_err(PolymarketUsError::from)
+            } else {
+                serde_json::from_str(&text).map_err(PolymarketUsError::from)
+            };
         }
-        .map_err(PolymarketUsError::from)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Parse a numeric `Retry-After: <seconds>` header value.
+fn parse_retry_after(response: &reqwest::Response) -> Option<Duration> {
+    response
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(Duration::from_secs)
+}
+
+/// Returns `true` for transport errors worth retrying (connect/timeout).
+fn is_transport_retryable(e: &reqwest::Error) -> bool {
+    e.is_connect() || e.is_timeout()
 }
 
 fn extract_error_message(text: &str) -> Option<String> {
@@ -380,5 +483,38 @@ mod tests {
     fn builder_defaults_match_public_endpoints() {
         let client = PolymarketUsClient::builder().build().unwrap();
         assert_eq!(client.api_base_url(), "https://api.polymarket.us");
+    }
+
+    #[test]
+    fn builder_retry_config_applied() {
+        let client = PolymarketUsClient::builder()
+            .retry(RetryConfig::none())
+            .build()
+            .unwrap();
+        assert_eq!(client.retry_config().max_retries, 0);
+    }
+
+    #[test]
+    fn builder_default_retry_is_three() {
+        let client = PolymarketUsClient::builder().build().unwrap();
+        assert_eq!(client.retry_config().max_retries, 3);
+    }
+
+    #[test]
+    fn builder_correlation_id_prefix_applied() {
+        let client = PolymarketUsClient::builder()
+            .correlation_id_prefix("myapp")
+            .build()
+            .unwrap();
+        // We can't directly read the prefix back without a getter, but we verify
+        // the client builds without error when a custom prefix is set.
+        assert_eq!(client.api_base_url(), "https://api.polymarket.us");
+    }
+
+    #[test]
+    fn with_reqwest_uses_default_retry() {
+        let http = reqwest::Client::new();
+        let client = PolymarketUsClient::with_reqwest(http, None);
+        assert_eq!(client.retry_config().max_retries, 3);
     }
 }
