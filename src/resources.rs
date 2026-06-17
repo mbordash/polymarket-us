@@ -464,9 +464,8 @@ mod tests {
     #[test]
     fn markets_client_creation() {
         let client = create_test_client();
-        let markets = client.markets();
         // Just verify it can be created; actual API calls need mocking
-        drop(markets);
+        let _markets = client.markets();
     }
 
     #[test]
@@ -489,8 +488,7 @@ mod tests {
     #[test]
     fn events_client_creation() {
         let client = create_test_client();
-        let events = client.events();
-        drop(events);
+        let _events = client.events();
     }
 
     #[test]
@@ -510,8 +508,7 @@ mod tests {
     #[test]
     fn orders_client_creation() {
         let client = create_test_client();
-        let orders = client.orders();
-        drop(orders);
+        let _orders = client.orders();
     }
 
     #[test]
@@ -588,8 +585,7 @@ mod tests {
     #[test]
     fn account_client_creation() {
         let client = create_test_client();
-        let account = client.account();
-        drop(account);
+        let _account = client.account();
     }
 
     #[test]
@@ -609,8 +605,7 @@ mod tests {
     #[test]
     fn portfolio_client_creation() {
         let client = create_test_client();
-        let portfolio = client.portfolio();
-        drop(portfolio);
+        let _portfolio = client.portfolio();
     }
 
     #[test]
@@ -630,8 +625,7 @@ mod tests {
     #[test]
     fn search_client_creation() {
         let client = create_test_client();
-        let search = client.search();
-        drop(search);
+        let _search = client.search();
     }
 
     #[test]
@@ -838,10 +832,6 @@ mod tests {
     fn resources_are_cheap_to_clone() {
         let client = create_test_client();
         let markets1 = client.markets();
-        let markets2 = markets1.clone();
-
-        // Both should reference same client
-        drop(markets1);
-        drop(markets2);
+        let _markets2 = markets1.clone();
     }
 }
