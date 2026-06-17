@@ -185,12 +185,6 @@ async fn check_health(client: &PolymarketUsClient) {
 }
 ```
 
-## Roadmap
-
-- [x] WebSocket support for real-time market data subscriptions.
-- [x] WebSocket user streams for order/fill updates.
-- [x] Reconnect and backoff helpers for long-running stream consumers.
-
 ## Acknowledgements
 
 Initial implementation originated in the DRADIS project and was extracted into this crate.
