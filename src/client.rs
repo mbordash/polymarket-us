@@ -140,8 +140,14 @@ impl PolymarketUsClient {
     }
 
     pub async fn health(&self) -> Result<types::HealthResponse, PolymarketUsError> {
-        self.internal_request::<(), (), types::HealthResponse>(Method::GET, "/v1/health", None, None, false)
-            .await
+        self.internal_request::<(), (), types::HealthResponse>(
+            Method::GET,
+            "/v1/health",
+            None,
+            None,
+            false,
+        )
+        .await
     }
 
     // ========================================================================
@@ -153,7 +159,10 @@ impl PolymarketUsClient {
         self.markets().list().await
     }
 
-    #[deprecated(since = "0.3.0", note = "use client.markets().list_with_query() instead")]
+    #[deprecated(
+        since = "0.3.0",
+        note = "use client.markets().list_with_query() instead"
+    )]
     pub async fn markets_list_with_query<Q: Serialize>(
         &self,
         query: Option<&Q>,
@@ -161,14 +170,20 @@ impl PolymarketUsClient {
         self.markets().list_with_query(query).await
     }
 
-    #[deprecated(since = "0.3.0", note = "use client.markets().list_authenticated() instead")]
+    #[deprecated(
+        since = "0.3.0",
+        note = "use client.markets().list_authenticated() instead"
+    )]
     pub async fn markets_list_authenticated(
         &self,
     ) -> Result<types::MarketsResponse, PolymarketUsError> {
         self.markets().list_authenticated().await
     }
 
-    #[deprecated(since = "0.3.0", note = "use client.markets().list_authenticated_with_query() instead")]
+    #[deprecated(
+        since = "0.3.0",
+        note = "use client.markets().list_authenticated_with_query() instead"
+    )]
     pub async fn markets_list_authenticated_with_query<Q: Serialize>(
         &self,
         query: Option<&Q>,

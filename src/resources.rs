@@ -34,9 +34,7 @@ impl<'a> MarketsClient<'a> {
     }
 
     /// List markets (authenticated)
-    pub async fn list_authenticated(
-        &self,
-    ) -> Result<types::MarketsResponse, PolymarketUsError> {
+    pub async fn list_authenticated(&self) -> Result<types::MarketsResponse, PolymarketUsError> {
         self.list_authenticated_with_query::<()>(None).await
     }
 
@@ -136,10 +134,7 @@ impl<'a> EventsClient<'a> {
     }
 
     /// Get event by slug
-    pub async fn retrieve_by_slug(
-        &self,
-        slug: &str,
-    ) -> Result<types::UsEvent, PolymarketUsError> {
+    pub async fn retrieve_by_slug(&self, slug: &str) -> Result<types::UsEvent, PolymarketUsError> {
         self.client
             .internal_request::<(), (), types::UsEvent>(
                 Method::GET,
@@ -182,7 +177,13 @@ impl<'a> OrdersClient<'a> {
         body: &types::PlaceOrderRequest,
     ) -> Result<types::PlaceOrderResponse, PolymarketUsError> {
         self.client
-            .internal_request(Method::POST, "/v1/trading/orders", None::<&()>, Some(body), true)
+            .internal_request(
+                Method::POST,
+                "/v1/trading/orders",
+                None::<&()>,
+                Some(body),
+                true,
+            )
             .await
     }
 
@@ -192,7 +193,13 @@ impl<'a> OrdersClient<'a> {
         body: &types::BatchedOrderRequest,
     ) -> Result<types::BatchedOrderResponse, PolymarketUsError> {
         self.client
-            .internal_request(Method::POST, "/v1/orders/batched", None::<&()>, Some(body), true)
+            .internal_request(
+                Method::POST,
+                "/v1/orders/batched",
+                None::<&()>,
+                Some(body),
+                true,
+            )
             .await
     }
 
@@ -298,7 +305,13 @@ impl<'a> OrdersClient<'a> {
         body: &types::PreviewOrderRequest,
     ) -> Result<types::PreviewOrderResponse, PolymarketUsError> {
         self.client
-            .internal_request(Method::POST, "/v1/order/preview", None::<&()>, Some(body), true)
+            .internal_request(
+                Method::POST,
+                "/v1/order/preview",
+                None::<&()>,
+                Some(body),
+                true,
+            )
             .await
     }
 
@@ -308,7 +321,13 @@ impl<'a> OrdersClient<'a> {
         body: &types::ClosePositionRequest,
     ) -> Result<types::ClosePositionResponse, PolymarketUsError> {
         self.client
-            .internal_request(Method::POST, "/v1/order/close-position", None::<&()>, Some(body), true)
+            .internal_request(
+                Method::POST,
+                "/v1/order/close-position",
+                None::<&()>,
+                Some(body),
+                true,
+            )
             .await
     }
 }
@@ -328,9 +347,7 @@ impl<'a> AccountClient<'a> {
     }
 
     /// Get account balances
-    pub async fn balances(
-        &self,
-    ) -> Result<types::AccountBalancesResponse, PolymarketUsError> {
+    pub async fn balances(&self) -> Result<types::AccountBalancesResponse, PolymarketUsError> {
         self.client
             .internal_request::<(), (), types::AccountBalancesResponse>(
                 Method::GET,
@@ -358,9 +375,7 @@ impl<'a> PortfolioClient<'a> {
     }
 
     /// Get portfolio positions
-    pub async fn positions(
-        &self,
-    ) -> Result<types::PortfolioPositionsResponse, PolymarketUsError> {
+    pub async fn positions(&self) -> Result<types::PortfolioPositionsResponse, PolymarketUsError> {
         self.client
             .internal_request::<(), (), types::PortfolioPositionsResponse>(
                 Method::GET,
@@ -561,9 +576,7 @@ mod tests {
 
     #[test]
     fn cancel_order_params_serializes() {
-        let params = types::CancelOrderParams {
-            quantity: Some(50),
-        };
+        let params = types::CancelOrderParams { quantity: Some(50) };
         let json = serde_json::to_string(&params).expect("should serialize");
         assert!(json.contains("50"));
     }
@@ -832,4 +845,3 @@ mod tests {
         drop(markets2);
     }
 }
-
