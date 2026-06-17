@@ -121,12 +121,12 @@ use polymarket_us::types;
 
 let order_req = types::PlaceOrderRequest {
     symbol: "BTC-USD".to_string(),
-    action: types::order_action::BUY.to_string(),
-    outcome_side: types::outcome::LONG.to_string(),
-    order_type: types::order_type::LIMIT.to_string(),
+    action: types::OrderAction::Buy,
+    outcome_side: types::OrderSide::Long,
+    order_type: types::OrderType::Limit,
     price: types::Money { value: "0.50".to_string(), currency: "USD".to_string() },
     quantity: 100,
-    tif: types::tif::GTC.to_string(),
+    tif: types::TimeInForce::GoodTillCancel,
     client_order_id: Some("my-order-1".to_string()),
     post_only: false,
     expires_at: None,
@@ -220,10 +220,14 @@ If your account tier requires authenticated access for some filters, use `list_a
 
 ## Streaming market data
 
-The SDK exposes an async WebSocket client via `client.streaming()`. It handles handshake signing, subscription frames, reconnects, and event parsing.
+The SDK exposes an async WebSocket client via `client.streaming()`. It supports reconnects,
+typed subscription helpers, and dynamic subscribe/unsubscribe while connected.
 
 ```rust
-use polymarket_us::{PolymarketUsClient, StreamConnectConfig, StreamSubscription};
+use polymarket_us::{
+    PolymarketUsClient, StreamConnectConfig, StreamDataEvent, StreamMessageKind,
+    StreamSubscription,
+};
 
 async fn watch_market(client: &PolymarketUsClient) -> anyhow::Result<()> {
     let stream_client = client.streaming();
@@ -231,18 +235,40 @@ async fn watch_market(client: &PolymarketUsClient) -> anyhow::Result<()> {
 
     let mut stream = stream_client
         .connect_with_config(
-            vec![StreamSubscription::market_data_lite("BTC-USD")],
+            vec![
+                StreamSubscription::market_data_lite("BTC-USD"),
+                StreamSubscription::trades("BTC-USD"),
+                StreamSubscription::heartbeat(),
+            ],
             config,
         )
         .await?;
 
+    // Add/remove subscriptions at runtime.
+    let dynamic_sub = StreamSubscription::market_data("BTC-USD");
+    let dynamic_tracking_id = dynamic_sub.tracking_id.clone();
+    stream.subscribe(dynamic_sub).await?;
+    stream.unsubscribe(&dynamic_tracking_id).await?;
+
     while let Some(message) = stream.next().await {
-        println!("{message:?}");
+        match message.kind {
+            StreamMessageKind::Data(StreamDataEvent::Trade(payload)) => {
+                println!("trade: {payload}");
+            }
+            StreamMessageKind::Data(StreamDataEvent::Heartbeat) => {
+                println!("heartbeat");
+            }
+            _ => {}
+        }
     }
 
     Ok(())
 }
 ```
+
+Supported event families include:
+- Market: `market_data`, `market_data_lite`, `order_book_delta`, `trade`, `heartbeat`
+- Private: `order_snapshot`, `order_update`, `position_snapshot`, `position_update`, `balance_snapshot`, `balance_update`
 
 ## Endpoint coverage
 
@@ -287,7 +313,10 @@ async fn watch_market(client: &PolymarketUsClient) -> anyhow::Result<()> {
 - `events(q)` — Search events
 
 **Streaming** (`client.streaming()`):
-- Async WebSocket client with automatic reconnect and subscription management
+- Typed channels via `SubscriptionChannel`
+- Subscription helpers on `StreamSubscription`
+- Dynamic `subscribe(...)` / `unsubscribe(...)`
+- Async WebSocket client with automatic reconnect and subscription replay
 
 ## Backward Compatibility
 
@@ -431,12 +460,12 @@ cargo test resources::tests::place_order_request_serializes
 
 Current test coverage includes:
 - ✅ Resource client creation and type checking (6 resources × 2 tests = 12 tests)
-- ✅ Request/Response serialization for all order types (8+ tests)
-- ✅ Type deserialization for markets, events, positions, balances (4+ tests)
-- ✅ Client resource accessor availability (2 tests)
-- ✅ Plus existing auth, streaming, and client tests (6 tests)
+- ✅ Request/Response serialization for all order types (typed enums + wire compatibility)
+- ✅ Type deserialization for markets, events, positions, balances
+- ✅ Streaming event parsing and subscription helper coverage
+- ✅ Retry/backoff policy tests and builder configuration tests
 
-**Total: 36 tests, all passing**
+**Total: 55 tests, all passing**
 
 ## Acknowledgements
 

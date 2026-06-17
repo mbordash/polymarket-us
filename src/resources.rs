@@ -525,15 +525,15 @@ mod tests {
     fn place_order_request_serializes() {
         let req = types::PlaceOrderRequest {
             symbol: "BTC-USD".to_string(),
-            action: types::order_action::BUY.to_string(),
-            outcome_side: types::outcome::LONG.to_string(),
-            order_type: types::order_type::LIMIT.to_string(),
+            action: types::OrderAction::Buy,
+            outcome_side: types::OrderSide::Long,
+            order_type: types::OrderType::Limit,
             price: types::Money {
                 value: "0.50".to_string(),
                 currency: "USD".to_string(),
             },
             quantity: 100,
-            tif: types::tif::GTC.to_string(),
+            tif: types::TimeInForce::GoodTillCancel,
             client_order_id: Some("test-123".to_string()),
             post_only: false,
             expires_at: None,
@@ -550,15 +550,15 @@ mod tests {
         let req = types::BatchedOrderRequest {
             orders: vec![types::PlaceOrderRequest {
                 symbol: "BTC-USD".to_string(),
-                action: types::order_action::BUY.to_string(),
-                outcome_side: types::outcome::LONG.to_string(),
-                order_type: types::order_type::LIMIT.to_string(),
+                action: types::OrderAction::Buy,
+                outcome_side: types::OrderSide::Long,
+                order_type: types::OrderType::Limit,
                 price: types::Money {
                     value: "0.50".to_string(),
                     currency: "USD".to_string(),
                 },
                 quantity: 100,
-                tif: types::tif::GTC.to_string(),
+                tif: types::TimeInForce::GoodTillCancel,
                 client_order_id: None,
                 post_only: false,
                 expires_at: None,
@@ -657,9 +657,9 @@ mod tests {
     fn preview_order_request_serializes() {
         let req = types::PreviewOrderRequest {
             symbol: "BTC-USD".to_string(),
-            action: types::order_action::SELL.to_string(),
-            outcome_side: types::outcome::SHORT.to_string(),
-            order_type: types::order_type::LIMIT.to_string(),
+            action: types::OrderAction::Sell,
+            outcome_side: types::OrderSide::Short,
+            order_type: types::OrderType::Limit,
             price: types::Money {
                 value: "0.75".to_string(),
                 currency: "USD".to_string(),

@@ -16,6 +16,73 @@ use tokio_tungstenite::{
 
 static TRACKING_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+// ---------------------------------------------------------------------------
+// Subscription channel enum
+// ---------------------------------------------------------------------------
+
+/// All known WebSocket subscription channels.
+///
+/// Pass a variant to the typed constructors on [`StreamSubscription`], or use
+/// [`SubscriptionChannel::as_str`] to get the wire-format channel name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SubscriptionChannel {
+    /// Initial snapshot of all open orders (private).
+    OrderSnapshot,
+    /// Real-time order lifecycle changes (private).
+    OrderUpdate,
+    /// Full order-book depth (public).
+    MarketData,
+    /// Best-bid/offer only (public).
+    MarketDataLite,
+    /// Initial snapshot of portfolio positions (private).
+    PositionSnapshot,
+    /// Real-time position changes (private).
+    PositionUpdate,
+    /// Initial snapshot of account balances (private).
+    BalanceSnapshot,
+    /// Real-time balance changes (private).
+    BalanceUpdate,
+    /// Trade execution feed (public).
+    Trade,
+    /// Server heartbeat — useful as an aliveness check.
+    Heartbeat,
+}
+
+impl SubscriptionChannel {
+    /// Returns the snake_case wire-format channel name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OrderSnapshot => "order_snapshot",
+            Self::OrderUpdate => "order_update",
+            Self::MarketData => "market_data",
+            Self::MarketDataLite => "market_data_lite",
+            Self::PositionSnapshot => "position_snapshot",
+            Self::PositionUpdate => "position_update",
+            Self::BalanceSnapshot => "balance_snapshot",
+            Self::BalanceUpdate => "balance_update",
+            Self::Trade => "trade",
+            Self::Heartbeat => "heartbeat",
+        }
+    }
+}
+
+impl std::fmt::Display for SubscriptionChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal command sent from ManagedStream → StreamRunner
+// ---------------------------------------------------------------------------
+
+enum StreamCommand {
+    Subscribe(StreamSubscription),
+    Unsubscribe(String), // tracking_id
+}
+
 #[derive(Clone)]
 pub struct PolymarketUsStreamClient {
     base_url: String,
@@ -62,6 +129,7 @@ impl PolymarketUsStreamClient {
         }
 
         let (tx, rx) = mpsc::channel(256);
+        let (cmd_tx, cmd_rx) = mpsc::channel(64);
         let shutdown = Arc::new(StreamShutdown::new());
         let base_url = self.base_url.clone();
         let auth = self.auth.clone();
@@ -75,6 +143,7 @@ impl PolymarketUsStreamClient {
                 config,
                 tx,
                 shutdown: shutdown_task,
+                cmd_rx,
             };
             runner.run().await;
         });
@@ -82,6 +151,7 @@ impl PolymarketUsStreamClient {
         Ok(ManagedStream {
             receiver: rx,
             shutdown,
+            cmd_tx,
         })
     }
 
@@ -106,6 +176,7 @@ impl PolymarketUsStreamClient {
 pub struct ManagedStream {
     receiver: mpsc::Receiver<StreamMessage>,
     shutdown: Arc<StreamShutdown>,
+    cmd_tx: mpsc::Sender<StreamCommand>,
 }
 
 impl ManagedStream {
@@ -119,6 +190,28 @@ impl ManagedStream {
 
     pub fn is_shutdown(&self) -> bool {
         self.shutdown.is_shutdown()
+    }
+
+    /// Dynamically add a subscription to the live connection.
+    ///
+    /// The subscription frame is sent immediately over the existing WebSocket
+    /// and re-sent automatically after every reconnect.
+    pub async fn subscribe(&self, sub: StreamSubscription) -> Result<(), PolymarketUsError> {
+        self.cmd_tx
+            .send(StreamCommand::Subscribe(sub))
+            .await
+            .map_err(|_| PolymarketUsError::InvalidStreamConfig("stream is closed".to_string()))
+    }
+
+    /// Remove a subscription by its `tracking_id`.
+    ///
+    /// The subscription is removed from the reconnect list immediately.
+    /// An unsubscribe frame is also sent to the server over the live connection.
+    pub async fn unsubscribe(&self, tracking_id: &str) -> Result<(), PolymarketUsError> {
+        self.cmd_tx
+            .send(StreamCommand::Unsubscribe(tracking_id.to_string()))
+            .await
+            .map_err(|_| PolymarketUsError::InvalidStreamConfig("stream is closed".to_string()))
     }
 }
 
@@ -227,17 +320,74 @@ impl StreamSubscription {
         }
     }
 
-    pub fn order_snapshot(symbol: impl Into<String>) -> Self {
-        let mut subscription = Self::new("order_snapshot");
-        subscription.symbol = Some(symbol.into());
-        subscription
+    /// Create a subscription for the given typed channel.
+    pub fn for_channel(channel: SubscriptionChannel) -> Self {
+        Self::new(channel.as_str())
     }
 
-    pub fn market_data_lite(symbol: impl Into<String>) -> Self {
-        let mut subscription = Self::new("market_data_lite");
-        subscription.symbol = Some(symbol.into());
-        subscription
+    // --- Market (public) ---
+
+    /// Full order-book depth updates for a market symbol.
+    pub fn market_data(symbol: impl Into<String>) -> Self {
+        let mut s = Self::new(SubscriptionChannel::MarketData.as_str());
+        s.symbol = Some(symbol.into());
+        s
     }
+
+    /// Best-bid/offer updates for a market symbol (lightweight).
+    pub fn market_data_lite(symbol: impl Into<String>) -> Self {
+        let mut s = Self::new(SubscriptionChannel::MarketDataLite.as_str());
+        s.symbol = Some(symbol.into());
+        s
+    }
+
+    /// Trade executions for a market symbol.
+    pub fn trades(symbol: impl Into<String>) -> Self {
+        let mut s = Self::new(SubscriptionChannel::Trade.as_str());
+        s.symbol = Some(symbol.into());
+        s
+    }
+
+    /// Server heartbeat channel — useful for keepalive monitoring.
+    pub fn heartbeat() -> Self {
+        Self::new(SubscriptionChannel::Heartbeat.as_str())
+    }
+
+    // --- Private (authenticated) ---
+
+    /// Initial snapshot of all open orders for a symbol.
+    pub fn order_snapshot(symbol: impl Into<String>) -> Self {
+        let mut s = Self::new(SubscriptionChannel::OrderSnapshot.as_str());
+        s.symbol = Some(symbol.into());
+        s
+    }
+
+    /// Real-time order lifecycle events.
+    pub fn order_update() -> Self {
+        Self::new(SubscriptionChannel::OrderUpdate.as_str())
+    }
+
+    /// Initial snapshot of all portfolio positions.
+    pub fn position_snapshot() -> Self {
+        Self::new(SubscriptionChannel::PositionSnapshot.as_str())
+    }
+
+    /// Real-time position changes.
+    pub fn position_update() -> Self {
+        Self::new(SubscriptionChannel::PositionUpdate.as_str())
+    }
+
+    /// Initial snapshot of account balances.
+    pub fn balance_snapshot() -> Self {
+        Self::new(SubscriptionChannel::BalanceSnapshot.as_str())
+    }
+
+    /// Real-time balance changes.
+    pub fn balance_update() -> Self {
+        Self::new(SubscriptionChannel::BalanceUpdate.as_str())
+    }
+
+    // --- Builder methods ---
 
     pub fn with_tracking_id(mut self, tracking_id: impl Into<String>) -> Self {
         self.tracking_id = tracking_id.into();
@@ -277,21 +427,43 @@ pub struct StreamMessage {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum StreamMessageKind {
     Data(StreamDataEvent),
     Control(StreamControlEvent),
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum StreamDataEvent {
+    /// Initial snapshot of all open orders (private channel).
     OrderSnapshot(Value),
-    MarketDataLite(Value),
-    OrderBookDelta(Value),
+    /// Real-time order lifecycle update (private channel).
     OrderUpdate(Value),
+    /// Full order-book depth update.
+    MarketData(Value),
+    /// Best-bid/offer update (lightweight).
+    MarketDataLite(Value),
+    /// Order-book delta / incremental update.
+    OrderBookDelta(Value),
+    /// Initial snapshot of all portfolio positions (private channel).
+    PositionSnapshot(Value),
+    /// Real-time position change (private channel).
+    PositionUpdate(Value),
+    /// Initial snapshot of account balances (private channel).
+    BalanceSnapshot(Value),
+    /// Real-time balance change (private channel).
+    BalanceUpdate(Value),
+    /// Trade execution event.
+    Trade(Value),
+    /// Server heartbeat — no payload.
+    Heartbeat,
+    /// Any server event not yet modelled by this SDK.
     Other { event_type: String, payload: Value },
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum StreamControlEvent {
     Connected { session_tracking_id: String },
     SubscriptionAck { event_type: String, payload: Value },
@@ -323,10 +495,11 @@ struct StreamRunner {
     config: StreamConnectConfig,
     tx: mpsc::Sender<StreamMessage>,
     shutdown: Arc<StreamShutdown>,
+    cmd_rx: mpsc::Receiver<StreamCommand>,
 }
 
 impl StreamRunner {
-    async fn run(self) {
+    async fn run(mut self) {
         let mut attempt = 0usize;
 
         loop {
@@ -378,8 +551,9 @@ impl StreamRunner {
                 break;
             }
 
+            let shutdown = Arc::clone(&self.shutdown);
             tokio::select! {
-                _ = self.shutdown.notified() => break,
+                _ = shutdown.notified() => break,
                 _ = tokio::time::sleep(delay) => {}
             }
         }
@@ -392,7 +566,7 @@ impl StreamRunner {
             .await;
     }
 
-    async fn connect_and_consume(&self) -> Result<(), PolymarketUsError> {
+    async fn connect_and_consume(&mut self) -> Result<(), PolymarketUsError> {
         let mut request = self
             .base_url
             .as_str()
@@ -430,9 +604,12 @@ impl StreamRunner {
             ))
             .await;
 
-        self.send_subscriptions(&mut websocket).await?;
+        self.send_all_subscriptions(&mut websocket).await?;
 
-        let shutdown_wait = self.shutdown.notified();
+        // Clone the Arc so the future borrows it, not &mut self, allowing
+        // cmd_rx to be used in the same select! block.
+        let shutdown = Arc::clone(&self.shutdown);
+        let shutdown_wait = shutdown.notified();
         tokio::pin!(shutdown_wait);
 
         loop {
@@ -464,28 +641,57 @@ impl StreamRunner {
                         Err(err) => return Err(err.into()),
                     }
                 }
+                cmd = self.cmd_rx.recv() => {
+                    match cmd {
+                        Some(StreamCommand::Subscribe(sub)) => {
+                            self.send_subscription(&mut websocket, &sub).await?;
+                            self.subscriptions.push(sub);
+                        }
+                        Some(StreamCommand::Unsubscribe(tracking_id)) => {
+                            self.subscriptions.retain(|s| s.tracking_id != tracking_id);
+                            // Best-effort unsubscribe frame; server may not support it.
+                            let frame = serde_json::json!({
+                                "type": "unsubscribe",
+                                "trackingId": tracking_id,
+                            });
+                            let _ = websocket
+                                .send(Message::Text(frame.to_string()))
+                                .await;
+                        }
+                        None => break,
+                    }
+                }
             }
         }
 
         Ok(())
     }
 
-    async fn send_subscriptions(
+    async fn send_all_subscriptions(
         &self,
         websocket: &mut tokio_tungstenite::WebSocketStream<
             tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
         >,
     ) -> Result<(), PolymarketUsError> {
         for subscription in &self.subscriptions {
-            let mut prepared = subscription.clone();
-            if prepared.responses_debounced.is_none() {
-                prepared.responses_debounced = Some(self.config.responses_debounced);
-            }
-
-            let payload = serde_json::to_string(&prepared)?;
-            websocket.send(Message::Text(payload)).await?;
+            self.send_subscription(websocket, subscription).await?;
         }
+        Ok(())
+    }
 
+    async fn send_subscription(
+        &self,
+        websocket: &mut tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        subscription: &StreamSubscription,
+    ) -> Result<(), PolymarketUsError> {
+        let mut prepared = subscription.clone();
+        if prepared.responses_debounced.is_none() {
+            prepared.responses_debounced = Some(self.config.responses_debounced);
+        }
+        let payload = serde_json::to_string(&prepared)?;
+        websocket.send(Message::Text(payload)).await?;
         Ok(())
     }
 
@@ -540,18 +746,43 @@ fn parse_stream_message(json: Value) -> Option<StreamMessage> {
             let payload = extract_payload(&map);
 
             let kind = match event_type.as_str() {
-                "order_snapshot" => {
+                // --- Order channels ---
+                "order_snapshot" | "orderSnapshot" => {
                     StreamMessageKind::Data(StreamDataEvent::OrderSnapshot(payload))
                 }
-                "market_data_lite" => {
-                    StreamMessageKind::Data(StreamDataEvent::MarketDataLite(payload))
-                }
-                "order_book_delta" | "orderbook_delta" | "book_delta" => {
-                    StreamMessageKind::Data(StreamDataEvent::OrderBookDelta(payload))
-                }
-                "order_update" | "order_updates" | "user_order" | "fill" => {
+                "order_update" | "order_updates" | "orderUpdate" | "user_order" | "fill" => {
                     StreamMessageKind::Data(StreamDataEvent::OrderUpdate(payload))
                 }
+                // --- Market channels ---
+                "market_data" | "marketData" => {
+                    StreamMessageKind::Data(StreamDataEvent::MarketData(payload))
+                }
+                "market_data_lite" | "marketDataLite" => {
+                    StreamMessageKind::Data(StreamDataEvent::MarketDataLite(payload))
+                }
+                "order_book_delta" | "orderbook_delta" | "book_delta" | "bookDelta" => {
+                    StreamMessageKind::Data(StreamDataEvent::OrderBookDelta(payload))
+                }
+                "trade" | "trades" => StreamMessageKind::Data(StreamDataEvent::Trade(payload)),
+                // --- Position channels ---
+                "position_snapshot" | "positionSnapshot" => {
+                    StreamMessageKind::Data(StreamDataEvent::PositionSnapshot(payload))
+                }
+                "position_update" | "positionUpdate" => {
+                    StreamMessageKind::Data(StreamDataEvent::PositionUpdate(payload))
+                }
+                // --- Balance channels ---
+                "balance_snapshot" | "balanceSnapshot" => {
+                    StreamMessageKind::Data(StreamDataEvent::BalanceSnapshot(payload))
+                }
+                "balance_update" | "balanceUpdate" => {
+                    StreamMessageKind::Data(StreamDataEvent::BalanceUpdate(payload))
+                }
+                // --- Keepalive ---
+                "heartbeat" | "ping" | "pong" => {
+                    StreamMessageKind::Data(StreamDataEvent::Heartbeat)
+                }
+                // --- Control ---
                 "subscription" | "subscribe" | "subscribed" | "ack" => {
                     StreamMessageKind::Control(StreamControlEvent::SubscriptionAck {
                         event_type: event_type.clone(),
@@ -705,6 +936,138 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_position_snapshot_event() {
+        let message = parse_stream_message(json!({
+            "event": "position_snapshot",
+            "data": { "positions": [] }
+        }))
+        .expect("message");
+        assert!(
+            matches!(
+                message.kind,
+                StreamMessageKind::Data(StreamDataEvent::PositionSnapshot(_))
+            ),
+            "expected PositionSnapshot"
+        );
+    }
+
+    #[test]
+    fn parses_balance_update_event() {
+        let message = parse_stream_message(json!({
+            "event": "balance_update",
+            "data": { "currency": "USD", "balance": "1000.00" }
+        }))
+        .expect("message");
+        assert!(
+            matches!(
+                message.kind,
+                StreamMessageKind::Data(StreamDataEvent::BalanceUpdate(_))
+            ),
+            "expected BalanceUpdate"
+        );
+    }
+
+    #[test]
+    fn parses_trade_event() {
+        let message = parse_stream_message(json!({
+            "event": "trade",
+            "data": { "price": "0.55", "size": "100" }
+        }))
+        .expect("message");
+        assert!(
+            matches!(
+                message.kind,
+                StreamMessageKind::Data(StreamDataEvent::Trade(_))
+            ),
+            "expected Trade"
+        );
+    }
+
+    #[test]
+    fn parses_heartbeat_event() {
+        let message = parse_stream_message(json!({ "event": "heartbeat" })).expect("message");
+        assert!(
+            matches!(
+                message.kind,
+                StreamMessageKind::Data(StreamDataEvent::Heartbeat)
+            ),
+            "expected Heartbeat"
+        );
+    }
+
+    #[test]
+    fn parses_market_data_lite_event() {
+        let message = parse_stream_message(json!({
+            "event": "market_data_lite",
+            "data": { "bid": "0.50", "ask": "0.55" }
+        }))
+        .expect("message");
+        assert!(
+            matches!(
+                message.kind,
+                StreamMessageKind::Data(StreamDataEvent::MarketDataLite(_))
+            ),
+            "expected MarketDataLite"
+        );
+    }
+
+    #[test]
+    fn subscription_channel_as_str() {
+        assert_eq!(
+            SubscriptionChannel::OrderSnapshot.as_str(),
+            "order_snapshot"
+        );
+        assert_eq!(
+            SubscriptionChannel::MarketDataLite.as_str(),
+            "market_data_lite"
+        );
+        assert_eq!(
+            SubscriptionChannel::PositionUpdate.as_str(),
+            "position_update"
+        );
+        assert_eq!(
+            SubscriptionChannel::BalanceSnapshot.as_str(),
+            "balance_snapshot"
+        );
+        assert_eq!(SubscriptionChannel::Trade.as_str(), "trade");
+        assert_eq!(SubscriptionChannel::Heartbeat.as_str(), "heartbeat");
+    }
+
+    #[test]
+    fn subscription_constructors_set_channel() {
+        assert_eq!(StreamSubscription::market_data("X").channel, "market_data");
+        assert_eq!(
+            StreamSubscription::market_data_lite("X").channel,
+            "market_data_lite"
+        );
+        assert_eq!(StreamSubscription::trades("X").channel, "trade");
+        assert_eq!(StreamSubscription::heartbeat().channel, "heartbeat");
+        assert_eq!(StreamSubscription::order_update().channel, "order_update");
+        assert_eq!(
+            StreamSubscription::position_snapshot().channel,
+            "position_snapshot"
+        );
+        assert_eq!(
+            StreamSubscription::position_update().channel,
+            "position_update"
+        );
+        assert_eq!(
+            StreamSubscription::balance_snapshot().channel,
+            "balance_snapshot"
+        );
+        assert_eq!(
+            StreamSubscription::balance_update().channel,
+            "balance_update"
+        );
+    }
+
+    #[test]
+    fn for_channel_constructor() {
+        let sub = StreamSubscription::for_channel(SubscriptionChannel::BalanceUpdate);
+        assert_eq!(sub.channel, "balance_update");
     }
 
     #[test]

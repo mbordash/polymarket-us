@@ -1,4 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+// ---------------------------------------------------------------------------
+// String-constant modules (kept for compatibility; prefer the typed enums below)
+// ---------------------------------------------------------------------------
 
 pub mod order_action {
     pub const BUY: &str = "ORDER_ACTION_BUY";
@@ -20,6 +25,109 @@ pub mod outcome {
     pub const LONG: &str = "LONG";
     pub const SHORT: &str = "SHORT";
 }
+
+// ---------------------------------------------------------------------------
+// Typed enums (preferred over the string-constant modules above)
+// ---------------------------------------------------------------------------
+
+/// Whether this order is a buy or a sell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum OrderAction {
+    #[serde(rename = "ORDER_ACTION_BUY")]
+    Buy,
+    #[serde(rename = "ORDER_ACTION_SELL")]
+    Sell,
+}
+
+impl fmt::Display for OrderAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Buy => f.write_str("ORDER_ACTION_BUY"),
+            Self::Sell => f.write_str("ORDER_ACTION_SELL"),
+        }
+    }
+}
+
+/// Outcome side — long (yes) or short (no).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum OrderSide {
+    #[serde(rename = "LONG")]
+    Long,
+    #[serde(rename = "SHORT")]
+    Short,
+}
+
+impl fmt::Display for OrderSide {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Long => f.write_str("LONG"),
+            Self::Short => f.write_str("SHORT"),
+        }
+    }
+}
+
+/// Order execution type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum OrderType {
+    #[serde(rename = "ORDER_TYPE_LIMIT")]
+    Limit,
+}
+
+impl fmt::Display for OrderType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ORDER_TYPE_LIMIT")
+    }
+}
+
+/// Time-in-force policy for an order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum TimeInForce {
+    /// Good-till-cancel — stays open until filled or explicitly cancelled.
+    #[serde(rename = "TIME_IN_FORCE_GOOD_TILL_CANCEL")]
+    GoodTillCancel,
+    /// Good-till-date — expires at a specified timestamp.
+    #[serde(rename = "TIME_IN_FORCE_GOOD_TILL_DATE")]
+    GoodTillDate,
+    /// Immediate-or-cancel (fill-and-kill) — any unfilled portion is cancelled.
+    #[serde(rename = "TIME_IN_FORCE_IMMEDIATE_OR_CANCEL")]
+    ImmediateOrCancel,
+    /// Fill-or-kill — must be filled entirely or cancelled entirely.
+    #[serde(rename = "TIME_IN_FORCE_FILL_OR_KILL")]
+    FillOrKill,
+}
+
+impl fmt::Display for TimeInForce {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::GoodTillCancel => "TIME_IN_FORCE_GOOD_TILL_CANCEL",
+            Self::GoodTillDate => "TIME_IN_FORCE_GOOD_TILL_DATE",
+            Self::ImmediateOrCancel => "TIME_IN_FORCE_IMMEDIATE_OR_CANCEL",
+            Self::FillOrKill => "TIME_IN_FORCE_FILL_OR_KILL",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Known market status values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum MarketStatus {
+    Open,
+    Closed,
+    Resolved,
+    /// Catch-all for any status string not yet modelled here.
+    #[serde(other)]
+    Unknown,
+}
+
+// ---------------------------------------------------------------------------
+// REST response/request types
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HealthResponse {
@@ -92,14 +200,14 @@ pub struct MarketSide {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlaceOrderRequest {
     pub symbol: String,
-    pub action: String,
+    pub action: OrderAction,
     #[serde(rename = "outcomeSide")]
-    pub outcome_side: String,
+    pub outcome_side: OrderSide,
     #[serde(rename = "type")]
-    pub order_type: String,
+    pub order_type: OrderType,
     pub price: Money,
     pub quantity: u64,
-    pub tif: String,
+    pub tif: TimeInForce,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_order_id: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -241,11 +349,11 @@ pub struct ModifyOrderRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct PreviewOrderRequest {
     pub symbol: String,
-    pub action: String,
+    pub action: OrderAction,
     #[serde(rename = "outcomeSide")]
-    pub outcome_side: String,
+    pub outcome_side: OrderSide,
     #[serde(rename = "type")]
-    pub order_type: String,
+    pub order_type: OrderType,
     pub price: Money,
     pub quantity: u64,
 }

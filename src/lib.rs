@@ -16,4 +16,6 @@ pub use retry::RetryConfig;
 pub use stream::{
     ManagedStream, PolymarketUsStreamClient, ReconnectConfig, StreamConnectConfig,
     StreamControlEvent, StreamDataEvent, StreamMessage, StreamMessageKind, StreamSubscription,
+    SubscriptionChannel,
 };
+pub use types::{MarketStatus, OrderAction, OrderSide, OrderType, TimeInForce};

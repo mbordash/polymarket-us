@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum PolymarketUsError {
     #[error("authentication required for endpoint {0}")]
     MissingAuth(&'static str),
