@@ -437,7 +437,7 @@ match client.markets().list().await {
 }
 ```
 
-For idempotent endpoints, the SDK already honours this automatically — the `Retry-After`
+For idempotent endpoints, the SDK already honors this automatically — the `Retry-After`
 duration is used directly instead of the configured backoff.
 
 ## Testing
