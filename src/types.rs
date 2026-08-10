@@ -113,6 +113,10 @@ impl fmt::Display for TimeInForce {
 }
 
 /// Known market status values.
+///
+/// [`UsMarket::status`] is kept as a raw `String` so no information is lost when
+/// the API introduces a status this SDK does not model yet. Use
+/// [`UsMarket::parsed_status`] to get this typed view of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
@@ -123,6 +127,29 @@ pub enum MarketStatus {
     /// Catch-all for any status string not yet modelled here.
     #[serde(other)]
     Unknown,
+}
+
+impl MarketStatus {
+    /// Parse a raw status string, case-insensitively.
+    ///
+    /// Anything unrecognised maps to [`MarketStatus::Unknown`] rather than
+    /// failing, so a new server-side status can never break a client.
+    pub fn from_api_str(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "open" => Self::Open,
+            "closed" => Self::Closed,
+            "resolved" => Self::Resolved,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl std::str::FromStr for MarketStatus {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from_api_str(s))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -168,11 +195,19 @@ pub struct UsMarket {
     #[serde(default, rename = "marketType")]
     pub market_type: String,
     #[serde(default, rename = "marketSides")]
-    pub market_sides: Vec<serde_json::Value>,
+    pub market_sides: Vec<MarketSide>,
     #[serde(default)]
     pub instruments: Vec<serde_json::Value>,
     #[serde(default)]
     pub outcomes: Vec<serde_json::Value>,
+}
+
+impl UsMarket {
+    /// [`Self::status`] as a typed value. Unrecognised statuses become
+    /// [`MarketStatus::Unknown`]; the raw string remains available on the field.
+    pub fn parsed_status(&self) -> MarketStatus {
+        MarketStatus::from_api_str(&self.status)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -453,23 +488,74 @@ pub struct SearchResults {
     pub events: Vec<UsEvent>,
 }
 
-// Series and Sports (placeholder for expansion)
-#[derive(Debug, Clone, Deserialize)]
-pub struct League {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub sport: String,
-}
+// `League` and `Team` placeholders were removed in 0.4.0. They were never
+// referenced by any request or response type, and publishing unreachable types
+// commits the SDK to a shape the API has not been checked against. They will
+// return alongside the endpoints that populate them.
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Team {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub league_id: Option<String>,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn market_status_parses_case_insensitively() {
+        assert_eq!(MarketStatus::from_api_str("open"), MarketStatus::Open);
+        assert_eq!(MarketStatus::from_api_str("OPEN"), MarketStatus::Open);
+        assert_eq!(
+            MarketStatus::from_api_str("  Closed "),
+            MarketStatus::Closed
+        );
+        assert_eq!(
+            MarketStatus::from_api_str("RESOLVED"),
+            MarketStatus::Resolved
+        );
+    }
+
+    #[test]
+    fn market_status_falls_back_to_unknown() {
+        // A status the SDK does not model must not be an error.
+        assert_eq!(MarketStatus::from_api_str("halted"), MarketStatus::Unknown);
+        assert_eq!(MarketStatus::from_api_str(""), MarketStatus::Unknown);
+    }
+
+    #[test]
+    fn parsed_status_reads_the_raw_field() {
+        let json = r#"{"id": "m1", "status": "OPEN"}"#;
+        let market: UsMarket = serde_json::from_str(json).expect("deserialize");
+        // Raw string is preserved, typed view is derived from it.
+        assert_eq!(market.status, "OPEN");
+        assert_eq!(market.parsed_status(), MarketStatus::Open);
+    }
+
+    #[test]
+    fn market_sides_deserialize_into_typed_values() {
+        let json = r#"{
+            "id": "m1",
+            "marketSides": [
+                {"id": "s1", "identifier": "YES", "price": "0.62", "long": true,
+                 "marketSideType": "BINARY", "unmodelledField": 7}
+            ]
+        }"#;
+        let market: UsMarket = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(market.market_sides.len(), 1);
+
+        let side = &market.market_sides[0];
+        assert_eq!(side.identifier, "YES");
+        assert_eq!(side.price, "0.62");
+        assert!(side.long);
+        // Unmodelled keys survive in `extra` rather than being dropped.
+        assert_eq!(
+            side.extra.get("unmodelledField"),
+            Some(&serde_json::json!(7))
+        );
+    }
+
+    #[test]
+    fn market_sides_tolerate_missing_fields() {
+        // Every MarketSide field defaults, so a sparse object must still parse.
+        let json = r#"{"id": "m1", "marketSides": [{}]}"#;
+        let market: UsMarket = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(market.market_sides.len(), 1);
+        assert_eq!(market.market_sides[0].identifier, "");
+    }
 }

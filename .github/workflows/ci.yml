@@ -40,3 +40,63 @@ jobs:
       - name: Run Linter (Clippy)
         run: cargo clippy --all-targets -- -D warnings
 
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+
+      # Covers unit tests, the examples, and the doc examples in lib.rs.
+      - name: Run Tests
+        run: cargo test --all-targets
+
+      - name: Run Doc Tests
+        run: cargo test --doc
+
+  msrv:
+    name: Minimum Supported Rust Version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Keep in sync with `rust-version` in Cargo.toml.
+      - name: Install Rust 1.86
+        uses: dtolnay/rust-toolchain@1.86
+
+      - name: Compile on MSRV
+        run: cargo check --all-targets
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Catches broken intra-doc links before they reach docs.rs.
+      - name: Build Documentation
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings

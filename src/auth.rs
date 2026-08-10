@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use crate::error::PolymarketUsError;
 use base64::Engine as _;
 use ed25519_dalek::{Signer, SigningKey};
 
@@ -27,37 +27,43 @@ pub struct UsAuth {
 }
 
 impl UsAuth {
-    pub fn from_env() -> Result<Self> {
-        let key_id = std::env::var(ENV_KEY_ID).with_context(|| format!("{ENV_KEY_ID} not set"))?;
-        let secret_b64 =
-            std::env::var(ENV_SECRET_KEY).with_context(|| format!("{ENV_SECRET_KEY} not set"))?;
+    /// Load credentials from the [`ENV_KEY_ID`] and [`ENV_SECRET_KEY`]
+    /// environment variables.
+    pub fn from_env() -> Result<Self, PolymarketUsError> {
+        let key_id = std::env::var(ENV_KEY_ID)
+            .map_err(|_| PolymarketUsError::InvalidCredentials(format!("{ENV_KEY_ID} not set")))?;
+        let secret_b64 = std::env::var(ENV_SECRET_KEY).map_err(|_| {
+            PolymarketUsError::InvalidCredentials(format!("{ENV_SECRET_KEY} not set"))
+        })?;
         Self::from_parts(key_id, &secret_b64)
     }
 
-    pub fn from_parts(key_id: String, secret_b64: &str) -> Result<Self> {
+    /// Build credentials from a key ID and a Base64-encoded Ed25519 secret.
+    ///
+    /// The secret must decode to either 64 bytes (keypair — the first 32 are
+    /// used as the signing seed) or 32 bytes (a raw seed).
+    pub fn from_parts(key_id: String, secret_b64: &str) -> Result<Self, PolymarketUsError> {
         let secret = base64::engine::general_purpose::STANDARD
             .decode(secret_b64.trim())
-            .context("POLYMARKET_US_SECRET_KEY is not valid Base64")?;
-
-        let signing_key = match secret.len() {
-            64 => {
-                let seed: [u8; 32] = secret[..32].try_into().expect("first 32 bytes");
-                SigningKey::from_bytes(&seed)
-            }
-            32 => {
-                let seed: [u8; 32] = secret.as_slice().try_into().expect("len checked == 32");
-                SigningKey::from_bytes(&seed)
-            }
-            n => {
-                return Err(anyhow!(
-                    "POLYMARKET_US_SECRET_KEY must decode to 64 bytes (keypair) or 32 bytes (seed), got {n}"
+            .map_err(|err| {
+                PolymarketUsError::InvalidCredentials(format!(
+                    "{ENV_SECRET_KEY} is not valid Base64: {err}"
                 ))
+            })?;
+
+        let seed: [u8; 32] = match secret.len() {
+            64 => secret[..32].try_into().expect("first 32 of 64 bytes"),
+            32 => secret.as_slice().try_into().expect("len checked == 32"),
+            n => {
+                return Err(PolymarketUsError::InvalidCredentials(format!(
+                    "{ENV_SECRET_KEY} must decode to 64 bytes (keypair) or 32 bytes (seed), got {n}"
+                )))
             }
         };
 
         Ok(Self {
             key_id,
-            signing_key,
+            signing_key: SigningKey::from_bytes(&seed),
         })
     }
 

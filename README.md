@@ -16,25 +16,25 @@ Unofficial Rust SDK for the Polymarket US Retail API.
 - **Async WebSocket streaming** — Market data and order updates with automatic reconnect
 - **Order book & pricing data** — Get order books, best bid/offer, settlement prices
 - **Builder-based configuration** — Base URLs, timeouts, custom HTTP client
-- **Backward compatible** — All legacy methods still work (deprecated)
+- **Automatic retries** — Exponential backoff with jitter on idempotent requests, honouring `Retry-After`; `POST` is never retried, so orders can't be duplicated
+- **rustls throughout** — No OpenSSL dependency
 
 ## Installation
 
-This crate is currently easiest to consume from source or git:
+```sh
+cargo add polymarket-us tokio --features tokio/macros,tokio/rt-multi-thread
+```
+
+Or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-polymarket-us = { path = "../polymarket-us" }
+polymarket-us = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Or via git:
-
-```toml
-[dependencies]
-polymarket-us = { git = "https://github.com/mbordash/DRADIS", package = "polymarket-us" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-```
+Requires Rust 1.86 or newer. TLS is provided by [rustls](https://github.com/rustls/rustls),
+so no OpenSSL installation is needed.
 
 ## Authentication
 
@@ -318,18 +318,36 @@ Supported event families include:
 - Dynamic `subscribe(...)` / `unsubscribe(...)`
 - Async WebSocket client with automatic reconnect and subscription replay
 
-## Backward Compatibility
+## Migrating to 0.4
 
-All legacy methods (e.g., `client.markets_list()`, `client.order_create()`) are still available but deprecated. They're aliases to the new resource-based API. Your existing code will continue to work—migrate at your own pace:
+The flat legacy methods deprecated in 0.3.0 have been removed. Each maps to a
+resource client:
 
 ```rust
-// Old style (deprecated, but still works)
-#[allow(deprecated)]
+// Removed in 0.4
 let markets = client.markets_list().await?;
+let balances = client.account_balances().await?;
+let order = client.place_order(&req).await?;
 
-// New style (preferred)
+// Use instead
 let markets = client.markets().list().await?;
+let balances = client.account().balances().await?;
+let order = client.orders().place(&req).await?;
 ```
+
+The general rule: `client.<resource>_<verb>()` becomes `client.<resource>().<verb>()`.
+
+Three other breaking changes:
+
+- **`UsAuth` returns `PolymarketUsError`, not `anyhow::Error`.** `UsAuth::from_env()`
+  and `UsAuth::from_parts()` now return `Result<UsAuth, PolymarketUsError>`, so
+  credential failures can be matched on like every other SDK error. Bad Base64 or a
+  wrong key length surfaces as `PolymarketUsError::InvalidCredentials`. If you were
+  using `?` inside an `anyhow::Result` function, no change is needed.
+- **`UsMarket::market_sides` is `Vec<MarketSide>`**, previously `Vec<serde_json::Value>`.
+  Unmodelled keys are preserved in `MarketSide::extra`.
+- **`League` and `Team` were removed.** They were unreachable placeholders that no
+  endpoint returned; they will return with the endpoints that populate them.
 
 ## Configuration
 

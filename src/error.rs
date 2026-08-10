@@ -5,8 +5,16 @@ use thiserror::Error;
 pub enum PolymarketUsError {
     #[error("authentication required for endpoint {0}")]
     MissingAuth(&'static str),
+    /// Credentials were present but malformed — bad Base64, wrong key length,
+    /// or a missing environment variable.
+    #[error("invalid credentials: {0}")]
+    InvalidCredentials(String),
     #[error("invalid stream configuration: {0}")]
     InvalidStreamConfig(String),
+    /// No frame arrived from the server within the configured idle timeout, so
+    /// the connection was treated as dead and torn down for reconnect.
+    #[error("stream idle for {0:?} with no frame from the server")]
+    StreamIdle(std::time::Duration),
     #[error("bad request: {0}")]
     BadRequest(String),
     #[error("authentication failed: {0}")]

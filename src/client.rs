@@ -139,6 +139,15 @@ impl PolymarketUsClient {
         &self.retry_config
     }
 
+    /// The prefix prepended to the `X-Correlation-ID` header of every request.
+    pub fn correlation_id_prefix(&self) -> &str {
+        &self.correlation_id_prefix
+    }
+
+    pub fn gateway_base_url(&self) -> &str {
+        &self.gateway_base_url
+    }
+
     // ========================================================================
     // Resource Access
     // ========================================================================
@@ -182,159 +191,6 @@ impl PolymarketUsClient {
             false,
         )
         .await
-    }
-
-    // ========================================================================
-    // Deprecated: Use resource clients instead (e.g., client.markets().list())
-    // ========================================================================
-
-    #[deprecated(since = "0.3.0", note = "use client.markets().list() instead")]
-    pub async fn markets_list(&self) -> Result<types::MarketsResponse, PolymarketUsError> {
-        self.markets().list().await
-    }
-
-    #[deprecated(
-        since = "0.3.0",
-        note = "use client.markets().list_with_query() instead"
-    )]
-    pub async fn markets_list_with_query<Q: Serialize>(
-        &self,
-        query: Option<&Q>,
-    ) -> Result<types::MarketsResponse, PolymarketUsError> {
-        self.markets().list_with_query(query).await
-    }
-
-    #[deprecated(
-        since = "0.3.0",
-        note = "use client.markets().list_authenticated() instead"
-    )]
-    pub async fn markets_list_authenticated(
-        &self,
-    ) -> Result<types::MarketsResponse, PolymarketUsError> {
-        self.markets().list_authenticated().await
-    }
-
-    #[deprecated(
-        since = "0.3.0",
-        note = "use client.markets().list_authenticated_with_query() instead"
-    )]
-    pub async fn markets_list_authenticated_with_query<Q: Serialize>(
-        &self,
-        query: Option<&Q>,
-    ) -> Result<types::MarketsResponse, PolymarketUsError> {
-        self.markets().list_authenticated_with_query(query).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.account().balances() instead")]
-    pub async fn account_balances(
-        &self,
-    ) -> Result<types::AccountBalancesResponse, PolymarketUsError> {
-        self.account().balances().await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.portfolio().positions() instead")]
-    pub async fn portfolio_positions(
-        &self,
-    ) -> Result<types::PortfolioPositionsResponse, PolymarketUsError> {
-        self.portfolio().positions().await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.portfolio().activities() instead")]
-    pub async fn portfolio_activities<Q: Serialize>(
-        &self,
-        query: Option<&Q>,
-    ) -> Result<types::PortfolioActivitiesResponse, PolymarketUsError> {
-        self.portfolio().activities(query).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().place() instead")]
-    pub async fn place_order(
-        &self,
-        body: &types::PlaceOrderRequest,
-    ) -> Result<types::PlaceOrderResponse, PolymarketUsError> {
-        self.orders().place(body).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().place_batch() instead")]
-    pub async fn place_batched_orders(
-        &self,
-        body: &types::BatchedOrderRequest,
-    ) -> Result<types::BatchedOrderResponse, PolymarketUsError> {
-        self.orders().place_batch(body).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().cancel_trading() instead")]
-    pub async fn cancel_trading_order(
-        &self,
-        order_id: &str,
-    ) -> Result<types::CancelOrderResponse, PolymarketUsError> {
-        self.orders().cancel_trading(order_id).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().create() instead")]
-    pub async fn orders_create(
-        &self,
-        body: &types::PlaceOrderRequest,
-    ) -> Result<types::PlaceOrderResponse, PolymarketUsError> {
-        self.orders().create(body).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().open() instead")]
-    pub async fn orders_open<Q: Serialize>(
-        &self,
-        query: Option<&Q>,
-    ) -> Result<types::GetOpenOrdersResponse, PolymarketUsError> {
-        self.orders().open(query).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().retrieve() instead")]
-    pub async fn order_retrieve(
-        &self,
-        order_id: &str,
-    ) -> Result<types::PlaceOrderResponse, PolymarketUsError> {
-        self.orders().retrieve(order_id).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().cancel() instead")]
-    pub async fn order_cancel(
-        &self,
-        order_id: &str,
-        body: &types::CancelOrderParams,
-    ) -> Result<(), PolymarketUsError> {
-        self.orders().cancel(order_id, body).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().modify() instead")]
-    pub async fn order_modify(
-        &self,
-        order_id: &str,
-        body: &types::ModifyOrderRequest,
-    ) -> Result<(), PolymarketUsError> {
-        self.orders().modify(order_id, body).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().cancel_all() instead")]
-    pub async fn orders_cancel_all(
-        &self,
-        body: &types::CancelAllOrdersParams,
-    ) -> Result<types::CancelAllOrdersResponse, PolymarketUsError> {
-        self.orders().cancel_all(body).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().preview() instead")]
-    pub async fn order_preview(
-        &self,
-        body: &types::PreviewOrderRequest,
-    ) -> Result<types::PreviewOrderResponse, PolymarketUsError> {
-        self.orders().preview(body).await
-    }
-
-    #[deprecated(since = "0.3.0", note = "use client.orders().close_position() instead")]
-    pub async fn order_close_position(
-        &self,
-        body: &types::ClosePositionRequest,
-    ) -> Result<types::ClosePositionResponse, PolymarketUsError> {
-        self.orders().close_position(body).await
     }
 
     // ========================================================================
@@ -435,8 +291,11 @@ impl PolymarketUsClient {
                 return Err(err);
             }
 
+            // An empty 2xx body (e.g. 204 No Content) is deserialized as JSON
+            // `null`, which satisfies both `()` and `Option<T>`. Using `{}` here
+            // would fail for any `T` that is not a struct or map.
             return if text.trim().is_empty() {
-                serde_json::from_str("{}").map_err(PolymarketUsError::from)
+                serde_json::from_str("null").map_err(PolymarketUsError::from)
             } else {
                 serde_json::from_str(&text).map_err(PolymarketUsError::from)
             };
@@ -448,14 +307,68 @@ impl PolymarketUsClient {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Parse a numeric `Retry-After: <seconds>` header value.
+/// Parse a `Retry-After` header in either form permitted by RFC 9110:
+/// a delay in seconds, or an absolute HTTP-date.
 fn parse_retry_after(response: &reqwest::Response) -> Option<Duration> {
-    response
-        .headers()
-        .get("retry-after")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-        .map(Duration::from_secs)
+    let raw = response.headers().get("retry-after")?.to_str().ok()?;
+    parse_retry_after_value(raw)
+}
+
+fn parse_retry_after_value(raw: &str) -> Option<Duration> {
+    let raw = raw.trim();
+
+    // Form 1: delay-seconds.
+    if let Ok(secs) = raw.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+
+    // Form 2: HTTP-date. Convert to a delay relative to now, clamping the past
+    // to zero so a skewed clock cannot produce a negative or huge wait.
+    let target = httpdate_to_unix_secs(raw)?;
+    let now = crate::auth::unix_timestamp_millis() / 1000;
+    Some(Duration::from_secs(target.saturating_sub(now).max(0) as u64))
+}
+
+/// Parse the IMF-fixdate form of HTTP-date, e.g.
+/// `Wed, 21 Oct 2015 07:28:00 GMT`, into seconds since the Unix epoch.
+///
+/// This is the only form servers are required to emit by RFC 9110, and
+/// implementing it here avoids taking on a date-parsing dependency.
+fn httpdate_to_unix_secs(raw: &str) -> Option<i64> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+
+    // "Wed, 21 Oct 2015 07:28:00 GMT" -> ["Wed,", "21", "Oct", "2015", "07:28:00", "GMT"]
+    let parts: Vec<&str> = raw.split_whitespace().collect();
+    if parts.len() != 6 || parts[5] != "GMT" {
+        return None;
+    }
+
+    let day: i64 = parts[1].parse().ok()?;
+    let month = MONTHS.iter().position(|m| *m == parts[2])? as i64 + 1;
+    let year: i64 = parts[3].parse().ok()?;
+
+    let hms: Vec<&str> = parts[4].split(':').collect();
+    if hms.len() != 3 {
+        return None;
+    }
+    let (hour, minute, second): (i64, i64, i64) = (
+        hms[0].parse().ok()?,
+        hms[1].parse().ok()?,
+        hms[2].parse().ok()?,
+    );
+
+    // Days from civil epoch (Howard Hinnant's algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+
+    Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
 /// Returns `true` for transport errors worth retrying (connect/timeout).
@@ -506,9 +419,63 @@ mod tests {
             .correlation_id_prefix("myapp")
             .build()
             .unwrap();
-        // We can't directly read the prefix back without a getter, but we verify
-        // the client builds without error when a custom prefix is set.
-        assert_eq!(client.api_base_url(), "https://api.polymarket.us");
+        assert_eq!(client.correlation_id_prefix(), "myapp");
+    }
+
+    #[test]
+    fn default_correlation_id_prefix() {
+        let client = PolymarketUsClient::builder().build().unwrap();
+        assert_eq!(client.correlation_id_prefix(), "pmrs");
+    }
+
+    #[test]
+    fn retry_after_parses_delay_seconds() {
+        assert_eq!(
+            parse_retry_after_value("120"),
+            Some(Duration::from_secs(120))
+        );
+        assert_eq!(
+            parse_retry_after_value("  30 "),
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[test]
+    fn retry_after_parses_http_date() {
+        // A date far in the past clamps to zero rather than going negative.
+        assert_eq!(
+            parse_retry_after_value("Wed, 21 Oct 2015 07:28:00 GMT"),
+            Some(Duration::from_secs(0))
+        );
+        // A date far in the future yields a positive delay.
+        let future = parse_retry_after_value("Fri, 01 Jan 2100 00:00:00 GMT").unwrap();
+        assert!(future > Duration::from_secs(0));
+    }
+
+    #[test]
+    fn retry_after_rejects_garbage() {
+        assert_eq!(parse_retry_after_value("not-a-date"), None);
+        assert_eq!(parse_retry_after_value(""), None);
+    }
+
+    #[test]
+    fn http_date_epoch_is_zero() {
+        assert_eq!(
+            httpdate_to_unix_secs("Thu, 01 Jan 1970 00:00:00 GMT"),
+            Some(0)
+        );
+        // Known reference value.
+        assert_eq!(
+            httpdate_to_unix_secs("Wed, 21 Oct 2015 07:28:00 GMT"),
+            Some(1_445_412_480)
+        );
+    }
+
+    #[test]
+    fn empty_body_deserializes_to_unit() {
+        // Guards the 204 No Content path in internal_request.
+        serde_json::from_str::<()>("null").expect("unit from null");
+        serde_json::from_str::<Option<String>>("null").expect("option from null");
     }
 
     #[test]

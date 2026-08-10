@@ -71,19 +71,31 @@ impl RetryConfig {
     /// Uses `initial_backoff × 2^(attempt−1)` capped at `max_backoff`,
     /// plus jitter derived from the subsecond system clock.
     pub(crate) fn backoff_for(&self, attempt: u32) -> Duration {
-        let base_ms = self.initial_backoff.as_millis() as f64;
-        let exp = 2_f64.powi(attempt.saturating_sub(1) as i32);
-        let backoff_ms = (base_ms * exp).min(self.max_backoff.as_millis() as f64);
-
-        // Deterministic jitter from subsecond clock — avoids pulling in `rand`.
-        let jitter_range_ms = backoff_ms * self.jitter_factor.clamp(0.0, 1.0);
+        // Jitter seed from the subsecond clock — avoids pulling in `rand`.
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .subsec_nanos();
-        let jitter_ms = (seed as f64 / u32::MAX as f64) * jitter_range_ms;
+        self.backoff_with_seed(attempt, seed)
+    }
 
-        Duration::from_millis((backoff_ms + jitter_ms) as u64)
+    /// Backoff computation with an explicit jitter seed, so the jitter range can
+    /// be tested without depending on the wall clock.
+    ///
+    /// `seed_nanos` is expected in `0..1_000_000_000` and is normalised against
+    /// that range. Normalising against `u32::MAX` instead would cap jitter at
+    /// roughly 23% of `jitter_factor` rather than spanning it.
+    fn backoff_with_seed(&self, attempt: u32, seed_nanos: u32) -> Duration {
+        const NANOS_PER_SEC: f64 = 1_000_000_000.0;
+
+        let base_ms = self.initial_backoff.as_millis() as f64;
+        let exp = 2_f64.powi(attempt.saturating_sub(1) as i32);
+        let backoff_ms = (base_ms * exp).min(self.max_backoff.as_millis() as f64);
+
+        let jitter_range_ms = backoff_ms * self.jitter_factor.clamp(0.0, 1.0);
+        let fraction = (seed_nanos as f64 / NANOS_PER_SEC).clamp(0.0, 1.0);
+
+        Duration::from_millis((backoff_ms + fraction * jitter_range_ms) as u64)
     }
 }
 
@@ -147,6 +159,44 @@ mod tests {
         // 100ms base + up to 25ms jitter
         assert!(b >= Duration::from_millis(100));
         assert!(b <= Duration::from_millis(125));
+    }
+
+    #[test]
+    fn jitter_spans_the_full_configured_range() {
+        let cfg = RetryConfig {
+            max_retries: 3,
+            initial_backoff: Duration::from_millis(1000),
+            max_backoff: Duration::from_secs(60),
+            jitter_factor: 0.5,
+        };
+
+        // A zero seed adds no jitter; a near-maximum seed adds nearly all of it.
+        // Before the fix the top of the range reached only ~1116ms, because the
+        // seed was normalised against u32::MAX rather than one second of nanos.
+        assert_eq!(cfg.backoff_with_seed(1, 0), Duration::from_millis(1000));
+        assert_eq!(
+            cfg.backoff_with_seed(1, 999_999_999),
+            Duration::from_millis(1499)
+        );
+        assert_eq!(
+            cfg.backoff_with_seed(1, 500_000_000),
+            Duration::from_millis(1250)
+        );
+    }
+
+    #[test]
+    fn jitter_never_exceeds_the_configured_factor() {
+        let cfg = RetryConfig {
+            max_retries: 3,
+            initial_backoff: Duration::from_millis(200),
+            max_backoff: Duration::from_secs(60),
+            jitter_factor: 0.25,
+        };
+        for seed in [0, 1, 250_000_000, 999_999_999, u32::MAX] {
+            let b = cfg.backoff_with_seed(1, seed);
+            assert!(b >= Duration::from_millis(200), "seed {seed} underflowed");
+            assert!(b <= Duration::from_millis(250), "seed {seed} overflowed");
+        }
     }
 
     #[test]

@@ -220,6 +220,15 @@ pub struct StreamConnectConfig {
     pub tracking_id: String,
     pub responses_debounced: bool,
     pub reconnect: ReconnectConfig,
+
+    /// Tear down and reconnect if no frame arrives from the server within this
+    /// window. Defaults to 60 seconds; `None` disables the check.
+    ///
+    /// Without this, a TCP connection that dies silently (no FIN, no RST — the
+    /// common case behind NAT timeouts and load-balancer drops) leaves the
+    /// stream blocked forever and reconnect never fires. Subscribing to
+    /// [`StreamSubscription::heartbeat`] guarantees regular traffic to feed it.
+    pub idle_timeout: Option<Duration>,
 }
 
 impl Default for StreamConnectConfig {
@@ -228,6 +237,7 @@ impl Default for StreamConnectConfig {
             tracking_id: next_tracking_id("session"),
             responses_debounced: false,
             reconnect: ReconnectConfig::default(),
+            idle_timeout: Some(Duration::from_secs(60)),
         }
     }
 }
@@ -245,6 +255,12 @@ impl StreamConnectConfig {
 
     pub fn with_reconnect(mut self, reconnect: ReconnectConfig) -> Self {
         self.reconnect = reconnect;
+        self
+    }
+
+    /// Set the idle timeout. Pass `None` to disable dead-connection detection.
+    pub fn with_idle_timeout(mut self, idle_timeout: Option<Duration>) -> Self {
+        self.idle_timeout = idle_timeout;
         self
     }
 }
@@ -612,13 +628,34 @@ impl StreamRunner {
         let shutdown_wait = shutdown.notified();
         tokio::pin!(shutdown_wait);
 
+        // Dead-connection detection. The sleep is armed unconditionally so the
+        // select! arm has something to poll, but is only ever selected when an
+        // idle timeout is configured; the fallback duration is never reached.
+        let idle_timeout = self.config.idle_timeout;
+        let idle_deadline =
+            tokio::time::sleep(idle_timeout.unwrap_or_else(|| Duration::from_secs(3600)));
+        tokio::pin!(idle_deadline);
+
         loop {
             tokio::select! {
                 _ = &mut shutdown_wait => {
                     let _ = websocket.close(None).await;
                     break;
                 }
+                _ = &mut idle_deadline, if idle_timeout.is_some() => {
+                    // Returning Err lets the outer run loop surface the reason
+                    // and then reconnect under the usual backoff policy.
+                    let _ = websocket.close(None).await;
+                    return Err(PolymarketUsError::StreamIdle(
+                        idle_timeout.expect("guarded by idle_timeout.is_some()"),
+                    ));
+                }
                 message = websocket.next() => {
+                    // Any frame — including a ping or pong — proves liveness.
+                    if let Some(timeout) = idle_timeout {
+                        idle_deadline.as_mut().reset(tokio::time::Instant::now() + timeout);
+                    }
+
                     let Some(message) = message else {
                         break;
                     };
@@ -866,17 +903,12 @@ fn normalize_stream_url(url: String) -> String {
     }
 }
 
+/// Map a gateway base URL onto its WebSocket endpoint.
+///
+/// Identical to [`normalize_stream_url`]; retained as a named alias because it
+/// documents intent at the `from_gateway_base_url` call site.
 fn derive_stream_url(gateway_base_url: &str) -> String {
-    let trimmed = gateway_base_url.trim_end_matches('/');
-    if trimmed.starts_with("ws://") || trimmed.starts_with("wss://") {
-        trimmed.to_string()
-    } else if let Some(rest) = trimmed.strip_prefix("https://") {
-        format!("wss://{rest}/ws")
-    } else if let Some(rest) = trimmed.strip_prefix("http://") {
-        format!("ws://{rest}/ws")
-    } else {
-        format!("wss://{trimmed}/ws")
-    }
+    normalize_stream_url(gateway_base_url.to_string())
 }
 
 #[cfg(test)]
