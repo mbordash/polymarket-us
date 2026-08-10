@@ -58,10 +58,10 @@ export POLYMARKET_US_SECRET_KEY="your-base64-secret"
 ## Quick start
 
 ```rust
-use polymarket_us::PolymarketUsClient;
+use polymarket_us::{PolymarketUsClient, PolymarketUsError};
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<(), PolymarketUsError> {
     let client = PolymarketUsClient::builder().build()?;
 
     // Health check
@@ -193,7 +193,7 @@ let events = client.search().events(&query).await?;
 Use `list_with_query()` for filters, cursors, and pagination:
 
 ```rust
-use polymarket_us::PolymarketUsClient;
+use polymarket_us::{PolymarketUsClient, PolymarketUsError};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -203,7 +203,7 @@ struct MarketsQuery<'a> {
     cursor: Option<&'a str>,
 }
 
-async fn load_filtered_markets(client: &PolymarketUsClient) -> anyhow::Result<()> {
+async fn load_filtered_markets(client: &PolymarketUsClient) -> Result<(), PolymarketUsError> {
     let query = MarketsQuery {
         category: Some("politics"),
         limit: Some(25),
@@ -216,20 +216,35 @@ async fn load_filtered_markets(client: &PolymarketUsClient) -> anyhow::Result<()
 }
 ```
 
-If your account tier requires authenticated access for some filters, use `list_authenticated_with_query()`:
+If your account tier requires authenticated access for some filters, use
+`list_authenticated_with_query()`, which takes the same query argument.
 
 ## Streaming market data
 
 The SDK exposes an async WebSocket client via `client.streaming()`. It supports reconnects,
 typed subscription helpers, and dynamic subscribe/unsubscribe while connected.
 
+Connections that go silent are torn down and reconnected after
+`StreamConnectConfig::idle_timeout` (60s by default). This matters because a TCP
+connection can die without a FIN or RST — common behind NAT and load balancers —
+in which case the socket never reports an error and the stream would otherwise
+wait forever. Subscribing to `StreamSubscription::heartbeat()` guarantees regular
+traffic to feed the check. Pass `None` to disable it:
+
+```rust
+use std::time::Duration;
+
+let config = StreamConnectConfig::default()
+    .with_idle_timeout(Some(Duration::from_secs(30)));
+```
+
 ```rust
 use polymarket_us::{
-    PolymarketUsClient, StreamConnectConfig, StreamDataEvent, StreamMessageKind,
-    StreamSubscription,
+    PolymarketUsClient, PolymarketUsError, StreamConnectConfig, StreamDataEvent,
+    StreamMessageKind, StreamSubscription,
 };
 
-async fn watch_market(client: &PolymarketUsClient) -> anyhow::Result<()> {
+async fn watch_market(client: &PolymarketUsClient) -> Result<(), PolymarketUsError> {
     let stream_client = client.streaming();
     let config = StreamConnectConfig::default().with_responses_debounced(true);
 

@@ -4,6 +4,7 @@ use crate::resources::{
     AccountClient, EventsClient, MarketsClient, OrdersClient, PortfolioClient, SearchClient,
 };
 use crate::retry::{is_retryable_status, RetryConfig};
+use crate::stream::PolymarketUsStreamClient;
 use crate::types;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -180,6 +181,29 @@ impl PolymarketUsClient {
     /// Access search resource (full-text search)
     pub fn search(&self) -> SearchClient<'_> {
         SearchClient::new(self)
+    }
+
+    /// Build a WebSocket stream client that inherits this client's gateway URL
+    /// and credentials.
+    ///
+    /// The returned client is independent of `self` and can outlive it.
+    ///
+    /// ```no_run
+    /// # use polymarket_us::{PolymarketUsClient, StreamSubscription};
+    /// # async fn run() -> Result<(), polymarket_us::PolymarketUsError> {
+    /// let client = PolymarketUsClient::builder().build()?;
+    /// let mut stream = client
+    ///     .streaming()
+    ///     .connect(vec![StreamSubscription::market_data_lite("BTC-USD")])
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn streaming(&self) -> PolymarketUsStreamClient {
+        PolymarketUsStreamClient::from_gateway_base_url(
+            self.gateway_base_url.clone(),
+            self.auth.clone(),
+        )
     }
 
     pub async fn health(&self) -> Result<types::HealthResponse, PolymarketUsError> {
@@ -420,6 +444,27 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(client.correlation_id_prefix(), "myapp");
+    }
+
+    #[test]
+    fn streaming_derives_websocket_url_from_gateway() {
+        let client = PolymarketUsClient::builder()
+            .gateway_base_url("https://gateway.example.com")
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.streaming().base_url(),
+            "wss://gateway.example.com/ws"
+        );
+    }
+
+    #[test]
+    fn streaming_uses_default_gateway() {
+        let client = PolymarketUsClient::builder().build().unwrap();
+        assert_eq!(
+            client.streaming().base_url(),
+            "wss://gateway.polymarket.us/ws"
+        );
     }
 
     #[test]
