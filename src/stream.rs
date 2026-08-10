@@ -1,4 +1,4 @@
-use crate::auth::UsAuth;
+use crate::auth::{unix_timestamp_millis, UsAuth};
 use crate::error::PolymarketUsError;
 use futures_util::{SinkExt, StreamExt};
 use http::HeaderValue;
@@ -655,7 +655,7 @@ impl StreamRunner {
                                 "trackingId": tracking_id,
                             });
                             let _ = websocket
-                                .send(Message::Text(frame.to_string()))
+                                .send(Message::Text(frame.to_string().into()))
                                 .await;
                         }
                         None => break,
@@ -691,7 +691,7 @@ impl StreamRunner {
             prepared.responses_debounced = Some(self.config.responses_debounced);
         }
         let payload = serde_json::to_string(&prepared)?;
-        websocket.send(Message::Text(payload)).await?;
+        websocket.send(Message::Text(payload.into())).await?;
         Ok(())
     }
 
@@ -850,10 +850,7 @@ fn extract_payload(map: &Map<String, Value>) -> Value {
 
 fn next_tracking_id(prefix: &str) -> String {
     let ordinal = TRACKING_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "{prefix}-{}-{ordinal}",
-        chrono::Utc::now().timestamp_millis()
-    )
+    format!("{prefix}-{}-{ordinal}", unix_timestamp_millis())
 }
 
 fn normalize_stream_url(url: String) -> String {

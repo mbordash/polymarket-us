@@ -9,6 +9,17 @@ pub const HEADER_ACCESS_KEY: &str = "X-PM-Access-Key";
 pub const HEADER_TIMESTAMP: &str = "X-PM-Timestamp";
 pub const HEADER_SIGNATURE: &str = "X-PM-Signature";
 
+/// Milliseconds since the Unix epoch.
+///
+/// Clocks set before 1970 clamp to `0` rather than panicking; the server will
+/// reject the resulting signature as stale, which is the correct outcome.
+pub(crate) fn unix_timestamp_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 #[derive(Clone)]
 pub struct UsAuth {
     key_id: String,
@@ -59,7 +70,7 @@ impl UsAuth {
     }
 
     pub fn sign(&self, method: &str, path: &str) -> (i64, String) {
-        let ts = chrono::Utc::now().timestamp_millis();
+        let ts = unix_timestamp_millis();
         let payload = Self::signing_payload(ts, method, path);
         let sig_bytes = self.signing_key.sign(payload.as_bytes()).to_bytes();
         let signature = base64::engine::general_purpose::STANDARD.encode(sig_bytes);

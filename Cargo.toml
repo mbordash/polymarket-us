@@ -13,17 +13,24 @@ categories = ["api-bindings", "finance"]
 
 [dependencies]
 anyhow = "1.0"
-base64 = "0.22"
-chrono = { version = "0.4", features = ["serde"] }
-ed25519-dalek = "2"
-futures-util = "0.3"
+base64 = "0.23"
+ed25519-dalek = "3"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 http = "1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "query",
+    "rustls",
+    "webpki-roots",
+    "http2",
+    "charset",
+    "system-proxy",
+] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
