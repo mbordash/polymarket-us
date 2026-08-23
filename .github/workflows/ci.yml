@@ -5,6 +5,10 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # Dependency drift happens with no commit of ours to trigger it, so the
+  # newest-dependencies job needs a clock as well as a push.
+  schedule:
+    - cron: '0 7 * * 1'
 
 env:
   CARGO_TERM_COLOR: always
@@ -77,6 +81,37 @@ jobs:
 
       - name: Compile on MSRV
         run: cargo check --all-targets
+
+  latest-deps:
+    name: Newest Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # The committed lockfile is what every other job builds against, so a
+      # dependency that has silently stopped resolving to its newest version is
+      # invisible to them. That is not a hypothetical: 0.5.0 shipped asking
+      # reqwest for a feature 0.13.4 had removed, cargo backtracked to 0.13.1
+      # without a word, and the break surfaced only in a downstream consumer.
+      - name: Check for held-back direct dependencies
+        run: .github/scripts/check-dependency-drift.sh
+
+      # And then actually build against the newest of everything, which catches
+      # the ordinary case the check above cannot: an upstream release that
+      # resolves fine but no longer compiles against this code.
+      - name: Update to newest compatible versions
+        run: cargo update
+
+      - name: Compile
+        run: cargo check --all-targets
+
+      - name: Run Tests
+        run: cargo test --all-targets
+
+      - name: Run Doc Tests
+        run: cargo test --doc
 
   audit:
     name: Security Audit

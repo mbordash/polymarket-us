@@ -23,17 +23,24 @@ use tokio_tungstenite::tungstenite::Message;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let url = args.next().expect("usage: probe_raw_frame <wss-url> <json-frame>");
-    let frame = args.next().expect("usage: probe_raw_frame <wss-url> <json-frame>");
+    let url = args
+        .next()
+        .expect("usage: probe_raw_frame <wss-url> <json-frame>");
+    let frame = args
+        .next()
+        .expect("usage: probe_raw_frame <wss-url> <json-frame>");
 
     let mut request = url.clone().into_client_request()?;
     if let Ok(auth) = UsAuth::from_env() {
-        let path = url.split_once("://")
+        let path = url
+            .split_once("://")
             .and_then(|(_, rest)| rest.find('/').map(|i| rest[i..].to_string()))
             .unwrap_or_else(|| "/".to_string());
         for (name, value) in auth.signed_headers("GET", &path) {
             request.headers_mut().insert(
-                tokio_tungstenite::tungstenite::http::header::HeaderName::from_bytes(name.as_bytes())?,
+                tokio_tungstenite::tungstenite::http::header::HeaderName::from_bytes(
+                    name.as_bytes(),
+                )?,
                 value.parse()?,
             );
         }
@@ -64,9 +71,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 n += 1;
             }
             Ok(Some(Ok(_))) => {}
-            Ok(Some(Err(e))) => { println!("stream error: {e}"); break; }
-            Ok(None) => { println!("closed"); break; }
-            Err(_) => { println!("(timeout — no further frames)"); break; }
+            Ok(Some(Err(e))) => {
+                println!("stream error: {e}");
+                break;
+            }
+            Ok(None) => {
+                println!("closed");
+                break;
+            }
+            Err(_) => {
+                println!("(timeout — no further frames)");
+                break;
+            }
         }
     }
     Ok(())

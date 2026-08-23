@@ -1,6 +1,6 @@
 [package]
 name = "polymarket-us"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 rust-version = "1.86"
 authors = ["Michael Bordash <michaelbordash@gmail.com>"]
@@ -17,11 +17,14 @@ base64 = "0.23"
 ed25519-dalek = "3"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 http = "1"
-reqwest = { version = "0.13", default-features = false, features = [
+# `rustls` brings its own verifier: as of reqwest 0.13.4 the roots come from the
+# platform verifier, and the separate `webpki-roots` feature no longer exists.
+# Asking for it pinned the resolver to 0.13.1 rather than failing, which is a
+# quiet way to conflict with any consumer that needs a newer reqwest.
+reqwest = { version = "0.13.4", default-features = false, features = [
     "json",
     "query",
     "rustls",
-    "webpki-roots",
     "http2",
     "charset",
     "system-proxy",

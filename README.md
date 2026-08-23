@@ -29,12 +29,14 @@ Or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-polymarket-us = "0.4"
+polymarket-us = "0.5"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 Requires Rust 1.86 or newer. TLS is provided by [rustls](https://github.com/rustls/rustls),
-so no OpenSSL installation is needed.
+so no OpenSSL installation is needed. Root certificates come from the platform
+verifier, which means the trust store the rest of the machine already uses — no
+bundled root set to go stale.
 
 ## Authentication
 
