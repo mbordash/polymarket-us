@@ -82,6 +82,13 @@ jobs:
       - name: Compile on MSRV
         run: cargo check --all-targets
 
+      # Compiling is not enough. Behaviour that varies by compiler version --
+      # `type_name_of_val` renders lifetimes differently on 1.86 than on current
+      # stable -- passes `cargo check` on every toolchain and still fails the
+      # suite on the oldest one.
+      - name: Run Tests on MSRV
+        run: cargo test --all-targets
+
   latest-deps:
     name: Newest Dependencies
     runs-on: ubuntu-latest

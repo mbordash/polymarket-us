@@ -473,11 +473,15 @@ mod tests {
         let client = create_test_client();
         let markets = client.markets();
 
-        // Verify methods exist by checking they can be called (won't execute due to no server)
-        // This is primarily a compile-time check through the type system
-        assert_eq!(
-            std::any::type_name_of_val(&markets),
-            "polymarket_us::resources::MarketsClient<'_>"
+        // Binding the value is the real check: it only compiles if the
+        // accessor returns this type. The assertion below guards the name, and
+        // deliberately ignores how the compiler renders the lifetime — that
+        // rendering changed between 1.86 and current stable, and pinning the
+        // exact string made these tests fail on the crate's own MSRV.
+        let rendered = std::any::type_name_of_val(&markets);
+        assert!(
+            rendered.starts_with("polymarket_us::resources::MarketsClient"),
+            "unexpected type: {rendered}"
         );
     }
 
@@ -495,9 +499,10 @@ mod tests {
     fn events_client_type_check() {
         let client = create_test_client();
         let events = client.events();
-        assert_eq!(
-            std::any::type_name_of_val(&events),
-            "polymarket_us::resources::EventsClient<'_>"
+        let rendered = std::any::type_name_of_val(&events);
+        assert!(
+            rendered.starts_with("polymarket_us::resources::EventsClient"),
+            "unexpected type: {rendered}"
         );
     }
 
@@ -515,9 +520,10 @@ mod tests {
     fn orders_client_type_check() {
         let client = create_test_client();
         let orders = client.orders();
-        assert_eq!(
-            std::any::type_name_of_val(&orders),
-            "polymarket_us::resources::OrdersClient<'_>"
+        let rendered = std::any::type_name_of_val(&orders);
+        assert!(
+            rendered.starts_with("polymarket_us::resources::OrdersClient"),
+            "unexpected type: {rendered}"
         );
     }
 
@@ -592,9 +598,10 @@ mod tests {
     fn account_client_type_check() {
         let client = create_test_client();
         let account = client.account();
-        assert_eq!(
-            std::any::type_name_of_val(&account),
-            "polymarket_us::resources::AccountClient<'_>"
+        let rendered = std::any::type_name_of_val(&account);
+        assert!(
+            rendered.starts_with("polymarket_us::resources::AccountClient"),
+            "unexpected type: {rendered}"
         );
     }
 
@@ -612,9 +619,10 @@ mod tests {
     fn portfolio_client_type_check() {
         let client = create_test_client();
         let portfolio = client.portfolio();
-        assert_eq!(
-            std::any::type_name_of_val(&portfolio),
-            "polymarket_us::resources::PortfolioClient<'_>"
+        let rendered = std::any::type_name_of_val(&portfolio);
+        assert!(
+            rendered.starts_with("polymarket_us::resources::PortfolioClient"),
+            "unexpected type: {rendered}"
         );
     }
 
@@ -632,9 +640,10 @@ mod tests {
     fn search_client_type_check() {
         let client = create_test_client();
         let search = client.search();
-        assert_eq!(
-            std::any::type_name_of_val(&search),
-            "polymarket_us::resources::SearchClient<'_>"
+        let rendered = std::any::type_name_of_val(&search);
+        assert!(
+            rendered.starts_with("polymarket_us::resources::SearchClient"),
+            "unexpected type: {rendered}"
         );
     }
 

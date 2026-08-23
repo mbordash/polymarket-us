@@ -38,6 +38,23 @@ so no OpenSSL installation is needed. Root certificates come from the platform
 verifier, which means the trust store the rest of the machine already uses — no
 bundled root set to go stale.
 
+### Minimum supported Rust version
+
+The MSRV is **1.86**, declared as `rust-version` in `Cargo.toml` and verified in
+CI: every push compiles *and* runs the test suite on exactly that toolchain.
+
+It is a tracked floor rather than a support promise. It follows what the
+dependency tree requires, and **may rise in any minor release** — it is not
+treated as a breaking change. Pin `polymarket-us = "=0.6.0"` if you need a
+toolchain guarantee.
+
+In practice the floor moves rarely and only for a reason. The crate uses Cargo's
+MSRV-aware resolver (`resolver = "3"`), so a dependency version needing a newer
+compiler is simply not selected; a routine `cargo update` cannot quietly raise
+what you need to build. CI fails when a *direct* dependency gets held back that
+way, and that failure is the trigger to raise the floor deliberately — to the
+version actually required, not to whatever is current.
+
 ## Authentication
 
 Authenticated endpoints require:

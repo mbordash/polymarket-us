@@ -59,9 +59,15 @@ echo "error: a direct dependency is held back below the newest version it allows
 printf '%s' "$findings" >&2
 cat >&2 <<'MSG'
 
-This usually means the manifest requests a feature the newer version no longer
-has. Cargo backtracks silently rather than failing, so the build stays green
-while consumers of this crate get a version conflict.
+Two things cause this. Either the manifest requests a feature the newer version
+no longer has, or -- since this crate uses the MSRV-aware resolver v3 -- the
+newer version needs a rustc above the `rust-version` floor. Cargo backtracks
+silently in both cases, so the build stays green while consumers of this crate
+get a version conflict.
+
+`cargo update --verbose` names the reason for each held-back package; a line
+ending "requires Rust <version>" is the MSRV case, and the fix there is to raise
+`rust-version` deliberately, not to chase the dependency.
 
 Reproduce the real error with:
 

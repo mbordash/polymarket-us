@@ -3,6 +3,12 @@ name = "polymarket-us"
 version = "0.6.0"
 edition = "2021"
 rust-version = "1.86"
+# Resolver v3 is MSRV-aware: it prefers dependency versions whose own
+# `rust-version` the floor above can actually build. Edition 2021 would
+# otherwise default to v2, which ignores `rust-version` entirely — that is how
+# a routine `cargo update` pulled in icu crates requiring rustc 1.88 and broke
+# the MSRV job.
+resolver = "3"
 authors = ["Michael Bordash <michaelbordash@gmail.com>"]
 description = "Unofficial Rust SDK for the Polymarket US Retail API"
 license = "MIT"
