@@ -4,7 +4,7 @@ use crate::resources::{
     AccountClient, EventsClient, MarketsClient, OrdersClient, PortfolioClient, SearchClient,
 };
 use crate::retry::{is_retryable_status, RetryConfig};
-use crate::stream::PolymarketUsStreamClient;
+use crate::stream::{MarketStreamClient, PrivateStreamClient};
 use crate::types;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -183,27 +183,53 @@ impl PolymarketUsClient {
         SearchClient::new(self)
     }
 
-    /// Build a WebSocket stream client that inherits this client's gateway URL
-    /// and credentials.
+    /// Build a client for the market-data socket, inheriting this client's
+    /// credentials.
     ///
-    /// The returned client is independent of `self` and can outlive it.
+    /// The WebSocket endpoints live on the API host, not the gateway host used
+    /// for public REST traffic, so this does not derive its URL from
+    /// `gateway_base_url`. The returned client is independent of `self` and can
+    /// outlive it.
     ///
     /// ```no_run
-    /// # use polymarket_us::{PolymarketUsClient, StreamSubscription};
+    /// # use polymarket_us::{PolymarketUsClient, MarketSubscription};
     /// # async fn run() -> Result<(), polymarket_us::PolymarketUsError> {
     /// let client = PolymarketUsClient::builder().build()?;
     /// let mut stream = client
-    ///     .streaming()
-    ///     .connect(vec![StreamSubscription::market_data_lite("BTC-USD")])
+    ///     .market_stream()
+    ///     .connect(vec![MarketSubscription::market_data_lite(["btc-100k-2025"])])
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn streaming(&self) -> PolymarketUsStreamClient {
-        PolymarketUsStreamClient::from_gateway_base_url(
-            self.gateway_base_url.clone(),
-            self.auth.clone(),
-        )
+    pub fn market_stream(&self) -> MarketStreamClient {
+        MarketStreamClient::new(self.auth.clone())
+    }
+
+    /// Build a client for the private account socket (orders, positions,
+    /// balances).
+    ///
+    /// Fails with [`PolymarketUsError::MissingAuth`] if this client has no
+    /// credentials — the private endpoint rejects an unauthenticated upgrade,
+    /// so there is nothing useful to hand back.
+    ///
+    /// ```no_run
+    /// # use polymarket_us::{PolymarketUsClient, PrivateSubscription, UsAuth};
+    /// # async fn run() -> Result<(), polymarket_us::PolymarketUsError> {
+    /// let client = PolymarketUsClient::builder().auth(UsAuth::from_env()?).build()?;
+    /// let mut stream = client
+    ///     .private_stream()?
+    ///     .connect(vec![PrivateSubscription::orders()])
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn private_stream(&self) -> Result<PrivateStreamClient, PolymarketUsError> {
+        let auth = self
+            .auth
+            .clone()
+            .ok_or(PolymarketUsError::MissingAuth("/v1/ws/private"))?;
+        Ok(PrivateStreamClient::new(auth))
     }
 
     pub async fn health(&self) -> Result<types::HealthResponse, PolymarketUsError> {
@@ -447,24 +473,26 @@ mod tests {
     }
 
     #[test]
-    fn streaming_derives_websocket_url_from_gateway() {
+    fn market_stream_targets_the_api_host_not_the_gateway() {
+        // The gateway URL is deliberately ignored: the sockets are served from
+        // the API host, and deriving from the gateway pointed at a dead path.
         let client = PolymarketUsClient::builder()
             .gateway_base_url("https://gateway.example.com")
             .build()
             .unwrap();
         assert_eq!(
-            client.streaming().base_url(),
-            "wss://gateway.example.com/ws"
+            client.market_stream().base_url(),
+            "wss://api.polymarket.us/v1/ws/markets"
         );
     }
 
     #[test]
-    fn streaming_uses_default_gateway() {
+    fn private_stream_requires_credentials() {
         let client = PolymarketUsClient::builder().build().unwrap();
-        assert_eq!(
-            client.streaming().base_url(),
-            "wss://gateway.polymarket.us/ws"
-        );
+        assert!(matches!(
+            client.private_stream(),
+            Err(PolymarketUsError::MissingAuth(_))
+        ));
     }
 
     #[test]

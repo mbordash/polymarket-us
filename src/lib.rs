@@ -51,25 +51,31 @@
 //!
 //! # Streaming
 //!
-//! [`PolymarketUsStreamClient`] maintains a WebSocket with automatic reconnect,
-//! re-subscribing on every reconnect. Connections that go silent are torn down
-//! after [`StreamConnectConfig::idle_timeout`] so a dead socket cannot stall the
-//! stream indefinitely.
+//! The venue splits its WebSocket surface across two sockets, and the SDK
+//! mirrors that split rather than multiplexing them:
+//!
+//! | Data | Endpoint | Client |
+//! |---|---|---|
+//! | Books, trades, best-bid/offer | `wss://api.polymarket.us/v1/ws/markets` | [`MarketStreamClient`] |
+//! | Orders, positions, balances | `wss://api.polymarket.us/v1/ws/private` | [`PrivateStreamClient`] |
+//!
+//! Each client maintains its connection with automatic reconnect, replaying its
+//! subscriptions every time. Connections that go silent are torn down after
+//! [`StreamConnectConfig::idle_timeout`] so a dead socket cannot stall the
+//! stream indefinitely, and a keepalive ping keeps a quiet market from tripping
+//! that check.
 //!
 //! ```no_run
-//! use polymarket_us::{PolymarketUsStreamClient, StreamSubscription};
+//! use polymarket_us::{MarketStreamClient, MarketSubscription};
 //!
 //! # async fn run() -> Result<(), polymarket_us::PolymarketUsError> {
-//! let stream = PolymarketUsStreamClient::from_gateway_base_url(
-//!     "https://gateway.polymarket.us",
-//!     None,
-//! );
+//! let client = MarketStreamClient::new(None);
 //!
-//! let mut managed = stream
-//!     .connect(vec![StreamSubscription::market_data("BTC-USD")])
+//! let mut stream = client
+//!     .connect(vec![MarketSubscription::market_data(["btc-100k-2025"])])
 //!     .await?;
 //!
-//! while let Some(message) = managed.next().await {
+//! while let Some(message) = stream.next().await {
 //!     println!("{:?}", message.kind);
 //! }
 //! # Ok(())
@@ -92,8 +98,8 @@ pub use resources::{
 };
 pub use retry::RetryConfig;
 pub use stream::{
-    ManagedStream, PolymarketUsStreamClient, ReconnectConfig, StreamConnectConfig,
-    StreamControlEvent, StreamDataEvent, StreamMessage, StreamMessageKind, StreamSubscription,
-    SubscriptionChannel,
+    MarketStream, MarketStreamClient, MarketSubscription, PrivateStream, PrivateStreamClient,
+    PrivateSubscription, ReconnectConfig, StreamConnectConfig, StreamControlEvent, StreamDataEvent,
+    StreamEndpoint, StreamMessage, StreamMessageKind, Subscription, SubscriptionType,
 };
 pub use types::{MarketStatus, OrderAction, OrderSide, OrderType, TimeInForce};

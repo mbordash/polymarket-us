@@ -1,44 +1,49 @@
 //! Stream live market data with automatic reconnect and dead-connection detection.
 //!
 //! ```sh
-//! cargo run --example stream_market_data -- BTC-USD
+//! cargo run --example stream_market_data -- btc-100k-2025
 //! ```
+//!
+//! Takes market *slugs*, not ticker symbols — the same identifiers the REST
+//! market listing returns. Credentials are picked up from
+//! `POLYMARKET_US_KEY_ID` / `POLYMARKET_US_SECRET_KEY` when present; the live
+//! endpoint has been observed to reject an unauthenticated upgrade.
 
 use polymarket_us::{
-    PolymarketUsError, PolymarketUsStreamClient, ReconnectConfig, StreamConnectConfig,
-    StreamControlEvent, StreamDataEvent, StreamMessageKind, StreamSubscription,
+    MarketStreamClient, MarketSubscription, PolymarketUsError, ReconnectConfig,
+    StreamConnectConfig, StreamControlEvent, StreamDataEvent, StreamMessageKind, UsAuth,
 };
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), PolymarketUsError> {
-    let symbol = std::env::args().nth(1).unwrap_or_else(|| "BTC-USD".into());
+    let slugs: Vec<String> = match std::env::args().skip(1).collect::<Vec<_>>() {
+        empty if empty.is_empty() => vec!["btc-100k-2025".to_string()],
+        provided => provided,
+    };
 
-    let stream = PolymarketUsStreamClient::from_gateway_base_url(
-        "https://gateway.polymarket.us",
-        None, // public channels need no auth
-    );
+    let client = MarketStreamClient::new(UsAuth::from_env().ok());
 
     let config = StreamConnectConfig::default()
         .with_reconnect(ReconnectConfig::default())
-        // Tear down and reconnect if the server goes quiet for 30s. The
-        // heartbeat subscription below guarantees regular traffic.
+        // Tear down and reconnect if the peer stops answering for 30s. The
+        // keepalive ping (on by default) is what proves it is still there when
+        // the market itself has nothing to report.
         .with_idle_timeout(Some(Duration::from_secs(30)));
 
-    let mut managed = stream
+    let mut stream = client
         .connect_with_config(
             vec![
-                StreamSubscription::market_data_lite(&symbol),
-                StreamSubscription::trades(&symbol),
-                StreamSubscription::heartbeat(),
+                MarketSubscription::market_data_lite(slugs.clone()),
+                MarketSubscription::trades(slugs.clone()),
             ],
             config,
         )
         .await?;
 
-    println!("streaming {symbol} — press Ctrl-C to stop");
+    println!("streaming {} — press Ctrl-C to stop", slugs.join(", "));
 
-    while let Some(message) = managed.next().await {
+    while let Some(message) = stream.next().await {
         match message.kind {
             StreamMessageKind::Data(StreamDataEvent::MarketDataLite(payload)) => {
                 println!("bbo: {payload}");

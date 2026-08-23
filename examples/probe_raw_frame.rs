@@ -1,13 +1,14 @@
 //! Send an arbitrary JSON frame to a WebSocket endpoint and print the replies.
 //!
-//! Exists to establish a wire format empirically. The typed client cannot do
-//! this: `StreamSubscription` fixes the frame shape, so a rejected subscription
-//! gives no way to try a different one without editing the library.
+//! Exists to test a frame shape empirically. The typed clients cannot do this:
+//! `MarketSubscription` and `PrivateSubscription` fix the frame shape, so a
+//! rejected subscription gives no way to try a different one without editing
+//! the library.
 //!
 //! ```sh
 //! cargo run --example probe_raw_frame -- \
 //!     wss://api.polymarket.us/v1/ws/markets \
-//!     '{"type":"subscribe","channel":"market_data","symbol":"..."}'
+//!     '{"subscribe":{"requestId":"md-1","subscriptionType":"SUBSCRIPTION_TYPE_MARKET_DATA","marketSlugs":["btc-100k-2025"]}}'
 //! ```
 //!
 //! Signs the upgrade with `POLYMARKET_US_KEY_ID` / `POLYMARKET_US_SECRET_KEY`
@@ -59,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match tokio::time::timeout(remaining, read.next()).await {
             Ok(Some(Ok(Message::Text(t)))) => {
                 let s = t.to_string();
-                println!("{}", s.chars().take(400).collect::<String>());
+                println!("{}", s.chars().take(4000).collect::<String>());
                 n += 1;
             }
             Ok(Some(Ok(_))) => {}

@@ -13,7 +13,7 @@ Unofficial Rust SDK for the Polymarket US Retail API.
 - **Resource-based API** — Organized into focused clients (`client.markets()`, `client.orders()`, `client.events()`, etc.)
 - **Ed25519 request signing** — Automatic X-PM-* authentication headers
 - **Typed async REST client** — Markets, events, orders, portfolio, account, and search endpoints
-- **Async WebSocket streaming** — Market data and order updates with automatic reconnect
+- **Async WebSocket streaming** — Separate market-data and private account sockets, with automatic reconnect and keepalive
 - **Order book & pricing data** — Get order books, best bid/offer, settlement prices
 - **Builder-based configuration** — Base URLs, timeouts, custom HTTP client
 - **Automatic retries** — Exponential backoff with jitter on idempotent requests, honouring `Retry-After`; `POST` is never retried, so orders can't be duplicated
@@ -219,59 +219,92 @@ async fn load_filtered_markets(client: &PolymarketUsClient) -> Result<(), Polyma
 If your account tier requires authenticated access for some filters, use
 `list_authenticated_with_query()`, which takes the same query argument.
 
-## Streaming market data
+## Streaming
 
-The SDK exposes an async WebSocket client via `client.streaming()`. It supports reconnects,
-typed subscription helpers, and dynamic subscribe/unsubscribe while connected.
+The venue splits its WebSocket surface across two sockets on the **API** host
+(not the gateway host used for public REST traffic), and the SDK mirrors that
+split rather than multiplexing them:
 
-Connections that go silent are torn down and reconnected after
-`StreamConnectConfig::idle_timeout` (60s by default). This matters because a TCP
-connection can die without a FIN or RST — common behind NAT and load balancers —
-in which case the socket never reports an error and the stream would otherwise
-wait forever. Subscribing to `StreamSubscription::heartbeat()` guarantees regular
-traffic to feed the check. Pass `None` to disable it:
+| Data | Endpoint | Client | Subscriptions |
+|---|---|---|---|
+| Books, trades, best-bid/offer | `wss://api.polymarket.us/v1/ws/markets` | `MarketStreamClient` | `MarketSubscription` |
+| Orders, positions, balances | `wss://api.polymarket.us/v1/ws/private` | `PrivateStreamClient` | `PrivateSubscription` |
 
-```rust
-use std::time::Duration;
+Because the two subscription families are distinct types, subscribing to an
+order feed on the market socket is a compile error rather than a server
+rejection.
 
-let config = StreamConnectConfig::default()
-    .with_idle_timeout(Some(Duration::from_secs(30)));
+### Wire format
+
+A subscription serializes to the server's `subscribe` envelope:
+
+```json
+{
+  "subscribe": {
+    "requestId": "md-sub-1",
+    "subscriptionType": "SUBSCRIPTION_TYPE_MARKET_DATA",
+    "marketSlugs": ["btc-100k-2025"]
+  }
+}
 ```
+
+and unsubscribing echoes the same `requestId`:
+
+```json
+{ "unsubscribe": { "requestId": "md-sub-1" } }
+```
+
+`MarketSubscription::frame()` / `PrivateSubscription::frame()` return exactly
+what will be sent, which is the quickest way to check a subscription against the
+docs. Note that the endpoint rejects a frame it cannot parse — including one
+carrying a field it does not define — so the SDK sends only the three documented
+fields. `insert_extra` adds more when the docs call for it.
+
+Subscription types map to `SubscriptionType`, whose wire form is the
+fully-qualified enum name:
+
+| Constructor | `subscriptionType` |
+|---|---|
+| `MarketSubscription::market_data(slugs)` | `SUBSCRIPTION_TYPE_MARKET_DATA` |
+| `MarketSubscription::market_data_lite(slugs)` | `SUBSCRIPTION_TYPE_MARKET_DATA_LITE` |
+| `MarketSubscription::trades(slugs)` | `SUBSCRIPTION_TYPE_TRADE` |
+| `PrivateSubscription::orders()` | `SUBSCRIPTION_TYPE_ORDER` |
+| `PrivateSubscription::positions()` | `SUBSCRIPTION_TYPE_POSITION` |
+| `PrivateSubscription::account_balances()` | `SUBSCRIPTION_TYPE_ACCOUNT_BALANCE` |
+
+A type the SDK does not model yet can still be used via `custom()`, which sends
+the string verbatim.
+
+### Market data
 
 ```rust
 use polymarket_us::{
-    PolymarketUsClient, PolymarketUsError, StreamConnectConfig, StreamDataEvent,
-    StreamMessageKind, StreamSubscription,
+    MarketSubscription, PolymarketUsClient, PolymarketUsError, StreamDataEvent,
+    StreamMessageKind,
 };
 
 async fn watch_market(client: &PolymarketUsClient) -> Result<(), PolymarketUsError> {
-    let stream_client = client.streaming();
-    let config = StreamConnectConfig::default().with_responses_debounced(true);
-
-    let mut stream = stream_client
-        .connect_with_config(
-            vec![
-                StreamSubscription::market_data_lite("BTC-USD"),
-                StreamSubscription::trades("BTC-USD"),
-                StreamSubscription::heartbeat(),
-            ],
-            config,
-        )
+    let mut stream = client
+        .market_stream()
+        .connect(vec![
+            MarketSubscription::market_data_lite(["btc-100k-2025"]),
+            MarketSubscription::trades(["btc-100k-2025"]),
+        ])
         .await?;
 
-    // Add/remove subscriptions at runtime.
-    let dynamic_sub = StreamSubscription::market_data("BTC-USD");
-    let dynamic_tracking_id = dynamic_sub.tracking_id.clone();
-    stream.subscribe(dynamic_sub).await?;
-    stream.unsubscribe(&dynamic_tracking_id).await?;
+    // Add and remove subscriptions at runtime.
+    let extra = MarketSubscription::market_data(["eth-10k-2025"]);
+    let request_id = extra.request_id().to_string();
+    stream.subscribe(extra).await?;
+    stream.unsubscribe(&request_id).await?;
 
     while let Some(message) = stream.next().await {
         match message.kind {
             StreamMessageKind::Data(StreamDataEvent::Trade(payload)) => {
                 println!("trade: {payload}");
             }
-            StreamMessageKind::Data(StreamDataEvent::Heartbeat) => {
-                println!("heartbeat");
+            StreamMessageKind::Data(StreamDataEvent::MarketDataLite(payload)) => {
+                println!("bbo: {payload}");
             }
             _ => {}
         }
@@ -281,9 +314,61 @@ async fn watch_market(client: &PolymarketUsClient) -> Result<(), PolymarketUsErr
 }
 ```
 
-Supported event families include:
-- Market: `market_data`, `market_data_lite`, `order_book_delta`, `trade`, `heartbeat`
-- Private: `order_snapshot`, `order_update`, `position_snapshot`, `position_update`, `balance_snapshot`, `balance_update`
+### Private account events
+
+`private_stream()` fails with `MissingAuth` if the client has no credentials,
+since the endpoint rejects an unauthenticated upgrade.
+
+```rust
+use polymarket_us::{PolymarketUsClient, PolymarketUsError, PrivateSubscription};
+
+async fn watch_account(client: &PolymarketUsClient) -> Result<(), PolymarketUsError> {
+    let mut stream = client
+        .private_stream()?
+        .connect(vec![
+            PrivateSubscription::orders(),
+            PrivateSubscription::positions(),
+            PrivateSubscription::account_balances(),
+        ])
+        .await?;
+
+    while let Some(message) = stream.next().await {
+        println!("{:?}", message.kind);
+    }
+
+    Ok(())
+}
+```
+
+### Staying connected
+
+Both streams reconnect automatically and replay their subscriptions each time.
+
+A connection that goes quiet for `StreamConnectConfig::idle_timeout` (60s by
+default) is torn down and reconnected. This matters because a TCP connection can
+die without a FIN or RST — common behind NAT and load balancers — in which case
+the socket never reports an error and the stream would otherwise wait forever.
+
+Feeding that check is `keepalive_interval` (20s by default): the SDK pings the
+server, and the pong counts as traffic. That distinction is what keeps a market
+with nothing to report from being mistaken for a dead socket. Pass `None` to
+either to switch it off.
+
+```rust
+use std::time::Duration;
+use polymarket_us::StreamConnectConfig;
+
+let config = StreamConnectConfig::default()
+    .with_idle_timeout(Some(Duration::from_secs(30)))
+    .with_keepalive_interval(Some(Duration::from_secs(10)));
+```
+
+Inbound events arrive as `StreamMessageKind::Data(StreamDataEvent::…)`:
+`MarketData`, `MarketDataLite`, `OrderBookDelta`, `Trade`, `OrderSnapshot`,
+`OrderUpdate`, `PositionSnapshot`, `PositionUpdate`, `BalanceSnapshot`,
+`BalanceUpdate`, `Heartbeat`, and `Other` for anything not yet modelled.
+`StreamMessage::request_id` carries the `requestId` the server echoed, matching
+the subscription that produced it.
 
 ## Endpoint coverage
 
@@ -327,11 +412,81 @@ Supported event families include:
 - `markets(q)` — Search markets
 - `events(q)` — Search events
 
-**Streaming** (`client.streaming()`):
-- Typed channels via `SubscriptionChannel`
-- Subscription helpers on `StreamSubscription`
-- Dynamic `subscribe(...)` / `unsubscribe(...)`
-- Async WebSocket client with automatic reconnect and subscription replay
+**Streaming** (`client.market_stream()` / `client.private_stream()`):
+- Two endpoint-specific clients mirroring the server's `/v1/ws/markets` and `/v1/ws/private` split
+- Typed subscription types via `SubscriptionType`, with `custom()` for unmodelled ones
+- Dynamic `subscribe(...)` / `unsubscribe(...)` by `requestId`
+- Automatic reconnect with subscription replay, keepalive pings, and idle-connection teardown
+
+## Migrating to 0.5
+
+**The streaming API in 0.4 did not work against the live venue.** It sent a flat
+frame — `{"channel": "market_data", "trackingId": ..., "symbol": ...}` — that the
+server never parsed as a subscribe request, so every subscription came back as
+`{"error":"invalid_message"}`. It also derived its URL from the gateway host,
+which does not serve WebSockets. 0.5 replaces that layer; there is no compatible
+upgrade path, but the mapping is mechanical.
+
+**One client became two**, matching the server's own split:
+
+```rust
+// 0.4 — one client, one socket, derived from the gateway host
+let stream = client.streaming();
+
+// 0.5 — wss://api.polymarket.us/v1/ws/markets
+let markets = client.market_stream();
+// 0.5 — wss://api.polymarket.us/v1/ws/private
+let private = client.private_stream()?;
+```
+
+**`StreamSubscription` became `MarketSubscription` and `PrivateSubscription`**,
+and takes market slugs rather than a symbol:
+
+```rust
+// 0.4
+StreamSubscription::market_data("BTC-USD")
+StreamSubscription::trades("BTC-USD")
+StreamSubscription::order_snapshot("BTC-USD")
+StreamSubscription::order_update()
+StreamSubscription::position_snapshot()   // and position_update()
+StreamSubscription::balance_snapshot()    // and balance_update()
+
+// 0.5
+MarketSubscription::market_data(["btc-100k-2025"])
+MarketSubscription::trades(["btc-100k-2025"])
+PrivateSubscription::orders()
+PrivateSubscription::positions()
+PrivateSubscription::account_balances()
+```
+
+The snapshot/update split is gone from the *subscribe* side — the server has one
+subscription type per family — but survives on the receive side, where
+`StreamDataEvent::OrderSnapshot` and `OrderUpdate` are still distinct.
+
+Everything else that changed:
+
+- **`SubscriptionChannel` became `SubscriptionType`**, and its wire form is the
+  fully-qualified enum name (`SUBSCRIPTION_TYPE_TRADE`, not `trade`). Unmodelled
+  types go through `MarketSubscription::custom` / `PrivateSubscription::custom`.
+- **`tracking_id` became `request_id`** throughout, matching the wire field.
+  `StreamMessage::tracking_id` is now `StreamMessage::request_id`, and
+  `unsubscribe` takes the `requestId` the subscription was created with.
+- **`ManagedStream` became `MarketStream` and `PrivateStream`.** Each accepts
+  only its own endpoint's subscription type, so the two sockets cannot be
+  crossed.
+- **`StreamSubscription::heartbeat()` is gone.** There is no heartbeat
+  subscription type; keeping the connection warm is now the SDK's job, via
+  `StreamConnectConfig::keepalive_interval`. If you subscribed to the heartbeat
+  purely to feed `idle_timeout`, drop the subscription — that is handled.
+- **`responses_debounced` is gone** from both `StreamSubscription` and
+  `StreamConnectConfig`. It is not part of the documented subscribe object, and
+  sending an undefined field risks the same `invalid_message` rejection.
+- **`StreamConnectConfig::tracking_id` became `session_id`**, and is explicitly
+  local — it identifies the connection in control events and is never sent.
+- **`PolymarketUsStreamClient::from_gateway_base_url` is gone.** The sockets are
+  not on the gateway host. `MarketStreamClient::with_base_url` and
+  `PrivateStreamClient::with_base_url` take an explicit override for staging or
+  local servers.
 
 ## Migrating to 0.4
 
@@ -495,10 +650,10 @@ Current test coverage includes:
 - ✅ Resource client creation and type checking (6 resources × 2 tests = 12 tests)
 - ✅ Request/Response serialization for all order types (typed enums + wire compatibility)
 - ✅ Type deserialization for markets, events, positions, balances
-- ✅ Streaming event parsing and subscription helper coverage
+- ✅ Streaming wire format, endpoint routing, event parsing, and keepalive/idle behaviour
 - ✅ Retry/backoff policy tests and builder configuration tests
 
-**Total: 55 tests, all passing**
+**Total: 88 tests plus 6 doc tests, all passing**
 
 ## Acknowledgements
 
