@@ -29,7 +29,7 @@ Or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-polymarket-us = "0.5"
+polymarket-us = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -653,9 +653,10 @@ Current test coverage includes:
 - ✅ Request/Response serialization for all order types (typed enums + wire compatibility)
 - ✅ Type deserialization for markets, events, positions, balances
 - ✅ Streaming wire format, endpoint routing, event parsing, and keepalive/idle behaviour
+- ✅ Gateway quirks in market deserialization (double-encoded `outcomes` / `outcomePrices`)
 - ✅ Retry/backoff policy tests and builder configuration tests
 
-**Total: 88 tests plus 6 doc tests, all passing**
+**Total: 93 tests plus 6 doc tests, all passing**
 
 ## Acknowledgements
 

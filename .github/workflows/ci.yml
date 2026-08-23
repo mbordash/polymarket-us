@@ -113,6 +113,32 @@ jobs:
       - name: Run Doc Tests
         run: cargo test --doc
 
+  minimal-versions:
+    name: Minimum Dependency Versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # -Z direct-minimal-versions is nightly-only. It is used here purely as a
+      # resolver, to build the lockfile; the build and tests then run on stable.
+      - name: Install Rust Toolchains
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Nightly (resolver only)
+        uses: dtolnay/rust-toolchain@nightly
+
+      # Every version floor in Cargo.toml is a promise that the crate works with
+      # that version. Nothing else in CI tests it: the lockfile pins the newest
+      # of everything, so an understated floor is invisible until a consumer
+      # with an older tree fails to build. This resolves each direct dependency
+      # down to its declared minimum and checks the promise is real.
+      - name: Resolve to minimum declared versions
+        run: cargo +nightly update -Z direct-minimal-versions
+
+      - name: Compile
+        run: cargo check --all-targets
+
+      - name: Run Tests
+        run: cargo test --all-targets
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest

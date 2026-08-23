@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 // ---------------------------------------------------------------------------
@@ -198,8 +198,21 @@ pub struct UsMarket {
     pub market_sides: Vec<MarketSide>,
     #[serde(default)]
     pub instruments: Vec<serde_json::Value>,
-    #[serde(default)]
-    pub outcomes: Vec<serde_json::Value>,
+    /// Outcome names, e.g. `["Titans", "Chargers"]`.
+    ///
+    /// The gateway sends this as a JSON-encoded *string* rather than an array,
+    /// so it is decoded on the way in; a plain array is accepted too.
+    #[serde(default, deserialize_with = "json_encoded_array")]
+    pub outcomes: Vec<String>,
+    /// Prices matching [`Self::outcomes`] positionally, as decimal strings.
+    ///
+    /// Encoded the same way as `outcomes`.
+    #[serde(
+        default,
+        rename = "outcomePrices",
+        deserialize_with = "json_encoded_array"
+    )]
+    pub outcome_prices: Vec<String>,
 }
 
 impl UsMarket {
@@ -207,6 +220,53 @@ impl UsMarket {
     /// [`MarketStatus::Unknown`]; the raw string remains available on the field.
     pub fn parsed_status(&self) -> MarketStatus {
         MarketStatus::from_api_str(&self.status)
+    }
+}
+
+/// Deserialize a field the gateway double-encodes: an array delivered as a
+/// string whose *contents* are JSON.
+///
+/// `outcomes` arrives as `"[\"Titans\",\"Chargers\"]"` — note the outer
+/// quotes — not as `["Titans", "Chargers"]`. Declaring the field as a sequence
+/// therefore fails the whole response with `invalid type: string ..., expected
+/// a sequence`, which is what broke `markets().list()` against live data.
+///
+/// A plain array is accepted too, so this keeps working if the gateway stops
+/// double-encoding. Non-string elements are rendered rather than rejected,
+/// since a price is equally plausible as `"0.55"` or `0.55` and neither is
+/// worth failing an entire market listing over.
+fn json_encoded_array<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Encoding {
+        Array(Vec<serde_json::Value>),
+        Encoded(String),
+    }
+
+    let items = match Option::<Encoding>::deserialize(deserializer)? {
+        None => return Ok(Vec::new()),
+        Some(Encoding::Array(items)) => items,
+        Some(Encoding::Encoded(raw)) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(Vec::new());
+            }
+            serde_json::from_str(trimmed).map_err(serde::de::Error::custom)?
+        }
+    };
+
+    Ok(items.into_iter().map(render_scalar).collect())
+}
+
+/// A string element as itself, anything else as its JSON rendering — so `1`
+/// becomes `"1"` rather than `"\"1\""`.
+fn render_scalar(value: serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text,
+        other => other.to_string(),
     }
 }
 
@@ -496,6 +556,53 @@ pub struct SearchResults {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outcomes_parse_from_the_gateway_double_encoded_form() {
+        // The exact shape that broke `markets().list()` in 0.5.1.
+        let market: UsMarket = serde_json::from_str(
+            r#"{"slug":"x","outcomes":"[\"Titans\",\"Chargers\"]","outcomePrices":"[\"1\",\"0\"]"}"#,
+        )
+        .expect("should deserialize");
+        assert_eq!(market.outcomes, ["Titans", "Chargers"]);
+        assert_eq!(market.outcome_prices, ["1", "0"]);
+    }
+
+    #[test]
+    fn outcomes_parse_from_a_plain_array() {
+        // Accepted so the SDK survives the gateway dropping the encoding.
+        let market: UsMarket =
+            serde_json::from_str(r#"{"outcomes":["Yes","No"],"outcomePrices":["0.6","0.4"]}"#)
+                .expect("should deserialize");
+        assert_eq!(market.outcomes, ["Yes", "No"]);
+        assert_eq!(market.outcome_prices, ["0.6", "0.4"]);
+    }
+
+    #[test]
+    fn numeric_elements_are_rendered_rather_than_rejected() {
+        let market: UsMarket =
+            serde_json::from_str(r#"{"outcomePrices":"[1,0.55]"}"#).expect("should deserialize");
+        assert_eq!(market.outcome_prices, ["1", "0.55"]);
+    }
+
+    #[test]
+    fn absent_null_and_empty_outcomes_all_become_an_empty_vec() {
+        for body in [r#"{}"#, r#"{"outcomes":null}"#, r#"{"outcomes":""}"#] {
+            let market: UsMarket =
+                serde_json::from_str(body).unwrap_or_else(|err| panic!("{body}: {err}"));
+            assert!(market.outcomes.is_empty(), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_malformed_encoding_is_an_error_not_a_silent_empty() {
+        let err = serde_json::from_str::<UsMarket>(r#"{"outcomes":"[\"unterminated"}"#)
+            .expect_err("should fail");
+        assert!(
+            err.to_string().contains("EOF") || err.to_string().contains("control"),
+            "unexpected error: {err}"
+        );
+    }
 
     #[test]
     fn market_status_parses_case_insensitively() {
