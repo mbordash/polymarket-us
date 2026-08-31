@@ -29,7 +29,7 @@ Or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-polymarket-us = "0.6"
+polymarket-us = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -38,6 +38,73 @@ so no OpenSSL installation is needed. Root certificates come from the platform
 verifier, which means the trust store the rest of the machine already uses — no
 bundled root set to go stale.
 
+## Migrating from 0.6 to 0.8
+
+One breaking change: **`GetOpenOrdersResponse.orders` is now `Vec<OpenOrder>`
+instead of `Vec<PlaceOrderResponse>`.**
+
+`PlaceOrderResponse` is the acknowledgement the API returns when you *place* an
+order, and it carries only an id, a status and quantities. Reusing it for
+`GET /v1/orders/open` silently discarded most of the response: the market, the
+side, the price and the time-in-force all arrive from the API and were being
+thrown away, so callers could not tell which order they were looking at or act on
+one safely.
+
+(0.7.0 made this same change but introduced an `Amount` type duplicating the
+existing `Money`. 0.8.0 removes `Amount` and uses `Money`. If you already moved
+to 0.7.0, the only further change is that name.)
+
+`OpenOrder` models the documented response instead:
+
+```rust
+pub struct OpenOrder {
+    pub id: String,
+    pub market_slug: String,               // "marketSlug"
+    pub side: Option<OrderSideDirection>,  // ORDER_SIDE_BUY / ORDER_SIDE_SELL
+    pub outcome_side: Option<OutcomeSide>, // OUTCOME_SIDE_YES / OUTCOME_SIDE_NO
+    pub price: Option<Money>,
+    pub quantity: f64,                     // original size, in contracts
+    pub cum_quantity: f64,                 // "cumQuantity" — filled so far
+    pub leaves_quantity: f64,              // "leavesQuantity" — still resting
+    pub tif: Option<TimeInForce>,
+    pub intent: Option<OrderIntent>,
+    pub state: String,
+    pub create_time: Option<String>,
+    pub good_till_time: Option<String>,
+}
+```
+
+### What to change
+
+If you only read the order id, the field is renamed and nothing else moves:
+
+```rust
+// 0.6
+for o in &open.orders { cancel(&o.order_id).await?; }
+
+// 0.7
+for o in &open.orders { cancel(&o.id).await?; }
+```
+
+If you read `status`, `filled_quantity` or `remaining_quantity`, they become
+`state`, `cum_quantity` and `leaves_quantity`. `state` is a `String` because the
+API documents the enum's name but not its values, so it is not modeled as one.
+
+Everything else the API sends is now available rather than dropped, so most
+callers can delete whatever bookkeeping they kept to work around the gap.
+
+### Unknown values do not fail the response
+
+`OrderSideDirection`, `OutcomeSide` and `OrderIntent` each carry an `Unknown`
+variant, and every field is `#[serde(default)]`. A value this crate has not seen
+before deserializes as `Unknown` rather than failing the whole response.
+
+That is deliberate rather than merely lenient. The common use for open orders is
+cancelling leftovers after a restart, and a response that fails to parse there
+leaves real orders working on the venue with nothing managing them. One
+unrecognized enum is much the lesser harm, and `id` — all `cancel` needs — still
+arrives.
+
 ### Minimum supported Rust version
 
 The MSRV is **1.86**, declared as `rust-version` in `Cargo.toml` and verified in
@@ -45,7 +112,7 @@ CI: every push compiles *and* runs the test suite on exactly that toolchain.
 
 It is a tracked floor rather than a support promise. It follows what the
 dependency tree requires, and **may rise in any minor release** — it is not
-treated as a breaking change. Pin `polymarket-us = "=0.6.0"` if you need a
+treated as a breaking change. Pin `polymarket-us = "=0.8.0"` if you need a
 toolchain guarantee.
 
 In practice the floor moves rarely and only for a reason. The crate uses Cargo's
@@ -154,8 +221,19 @@ let order_req = types::PlaceOrderRequest {
 // Place order
 let order = client.orders().create(&order_req).await?;
 
-// Get open orders
+// Get open orders. Each entry carries the market, side, price and quantities —
+// see the migration note below if you are coming from 0.6 or 0.7.
 let open = client.orders().open(None::<&()>).await?;
+for order in &open.orders {
+    println!(
+        "{} {} {:?} {} @ {}",
+        order.id,
+        order.market_slug,
+        order.outcome_side,
+        order.leaves_quantity,
+        order.price.as_ref().map(|p| p.value.as_str()).unwrap_or("-"),
+    );
+}
 
 // Modify, cancel, preview
 client.orders().modify(&order.order_id, &modify_req).await?;

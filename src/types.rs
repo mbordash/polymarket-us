@@ -311,9 +311,20 @@ pub struct PlaceOrderRequest {
     pub expires_at: Option<u64>,
 }
 
+/// A monetary amount: a decimal string plus its currency.
+///
+/// Kept as a string rather than a float because the API sends it that way and a
+/// caller pricing an order wants an exact decimal.
+///
+/// Both fields default when absent. That matters on the read side: `OpenOrder`
+/// carries a `Money` price, and its consumers cancel leftover orders after a
+/// restart — a response that fails to parse there leaves real orders working on
+/// the venue. Serialization is unaffected, so request bodies still send both.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Money {
+    #[serde(default)]
     pub value: String,
+    #[serde(default)]
     pub currency: String,
 }
 
@@ -473,18 +484,6 @@ pub struct ClosePositionResponse {
     pub order_id: Option<String>,
 }
 
-/// A monetary amount as the US API reports it: a decimal string plus its currency.
-///
-/// Kept as a string rather than a float because the API sends it that way and the
-/// caller usually wants an exact decimal.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Amount {
-    #[serde(default)]
-    pub value: String,
-    #[serde(default)]
-    pub currency: String,
-}
-
 /// Direction of an open order, as reported on its `side` field.
 ///
 /// Distinct from [`OrderAction`] despite meaning the same thing: the open-orders
@@ -557,7 +556,7 @@ pub struct OpenOrder {
     #[serde(default, rename = "outcomeSide")]
     pub outcome_side: Option<OutcomeSide>,
     #[serde(default)]
-    pub price: Option<Amount>,
+    pub price: Option<Money>,
     /// Original order quantity, in contracts.
     #[serde(default)]
     pub quantity: f64,
@@ -831,6 +830,18 @@ mod open_order_tests {
         assert_eq!(o.side, Some(OrderSideDirection::Unknown));
         assert_eq!(o.outcome_side, Some(OutcomeSide::Unknown));
         assert_eq!(o.intent, Some(OrderIntent::Unknown));
+    }
+
+    /// A price missing its currency must not fail the response.
+    #[test]
+    fn a_price_without_a_currency_parses() {
+        let parsed: GetOpenOrdersResponse = serde_json::from_str(
+            r#"{"orders":[{"id":"ord_px","price":{"value":"0.42"}}]}"#,
+        )
+        .expect("a partial price must not fail the whole response");
+        let price = parsed.orders[0].price.as_ref().unwrap();
+        assert_eq!(price.value, "0.42");
+        assert_eq!(price.currency, "");
     }
 
     /// Absent optional fields are absent, not errors.
