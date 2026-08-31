@@ -473,10 +473,118 @@ pub struct ClosePositionResponse {
     pub order_id: Option<String>,
 }
 
+/// A monetary amount as the US API reports it: a decimal string plus its currency.
+///
+/// Kept as a string rather than a float because the API sends it that way and the
+/// caller usually wants an exact decimal.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Amount {
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub currency: String,
+}
+
+/// Direction of an open order, as reported on its `side` field.
+///
+/// Distinct from [`OrderAction`] despite meaning the same thing: the open-orders
+/// response spells these `ORDER_SIDE_*` while `action` spells them
+/// `ORDER_ACTION_*`, so they cannot share a type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum OrderSideDirection {
+    #[serde(rename = "ORDER_SIDE_BUY")]
+    Buy,
+    #[serde(rename = "ORDER_SIDE_SELL")]
+    Sell,
+    /// Any value this crate does not know. Present so a single unrecognized enum
+    /// cannot fail the whole open-orders response — callers use that response to
+    /// cancel stale orders, and failing closed there leaves real orders working.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Which outcome of a market an order is against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum OutcomeSide {
+    #[serde(rename = "OUTCOME_SIDE_YES")]
+    Yes,
+    #[serde(rename = "OUTCOME_SIDE_NO")]
+    No,
+    #[serde(other)]
+    Unknown,
+}
+
+/// What an order does to a position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum OrderIntent {
+    #[serde(rename = "ORDER_INTENT_BUY_LONG")]
+    BuyLong,
+    #[serde(rename = "ORDER_INTENT_SELL_LONG")]
+    SellLong,
+    #[serde(rename = "ORDER_INTENT_BUY_SHORT")]
+    BuyShort,
+    #[serde(rename = "ORDER_INTENT_SELL_SHORT")]
+    SellShort,
+    #[serde(other)]
+    Unknown,
+}
+
+/// One resting order, as returned by `GET /v1/orders/open`.
+///
+/// Modeled from the documented response schema. Every field is `#[serde(default)]`
+/// and the unknown-tolerant enums above are used throughout, because the primary
+/// consumer of this type cancels leftover orders at startup: a response that fails
+/// to parse leaves real orders working on the venue, which is strictly worse than
+/// one field arriving as `Unknown`.
+///
+/// Previously this endpoint was typed as [`PlaceOrderResponse`], which carries only
+/// an id, a status and quantities — so the market, side and price were discarded
+/// and a caller could not tell which order it was looking at.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct OpenOrder {
+    /// Exchange-assigned order id, and what `cancel` takes.
+    #[serde(default)]
+    pub id: String,
+    /// Market identifier. Combine with [`Self::outcome_side`] to name a leg.
+    #[serde(default, rename = "marketSlug")]
+    pub market_slug: String,
+    #[serde(default)]
+    pub side: Option<OrderSideDirection>,
+    #[serde(default, rename = "outcomeSide")]
+    pub outcome_side: Option<OutcomeSide>,
+    #[serde(default)]
+    pub price: Option<Amount>,
+    /// Original order quantity, in contracts.
+    #[serde(default)]
+    pub quantity: f64,
+    /// Cumulative filled quantity.
+    #[serde(default, rename = "cumQuantity")]
+    pub cum_quantity: f64,
+    /// Remaining unfilled quantity.
+    #[serde(default, rename = "leavesQuantity")]
+    pub leaves_quantity: f64,
+    #[serde(default)]
+    pub tif: Option<TimeInForce>,
+    #[serde(default)]
+    pub intent: Option<OrderIntent>,
+    /// Lifecycle state. Left as a string because the documented schema names the
+    /// enum without enumerating its values.
+    #[serde(default)]
+    pub state: String,
+    #[serde(default, rename = "createTime")]
+    pub create_time: Option<String>,
+    #[serde(default, rename = "goodTillTime")]
+    pub good_till_time: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct GetOpenOrdersResponse {
     #[serde(default)]
-    pub orders: Vec<PlaceOrderResponse>,
+    pub orders: Vec<OpenOrder>,
 }
 
 // Events
@@ -664,5 +772,84 @@ mod tests {
         let market: UsMarket = serde_json::from_str(json).expect("deserialize");
         assert_eq!(market.market_sides.len(), 1);
         assert_eq!(market.market_sides[0].identifier, "");
+    }
+}
+
+#[cfg(test)]
+mod open_order_tests {
+    use super::*;
+
+    /// The documented shape, deserialized field for field.
+    #[test]
+    fn a_documented_open_order_parses() {
+        let json = r#"{"orders":[{
+            "id":"ord_123",
+            "marketSlug":"cpc-btc-above-yr-12-31-2026-200k",
+            "side":"ORDER_SIDE_BUY",
+            "type":"ORDER_TYPE_LIMIT",
+            "price":{"value":"0.93","currency":"USD"},
+            "quantity":8.6,
+            "cumQuantity":1.6,
+            "leavesQuantity":7.0,
+            "tif":"TIME_IN_FORCE_GOOD_TILL_CANCEL",
+            "intent":"ORDER_INTENT_BUY_SHORT",
+            "outcomeSide":"OUTCOME_SIDE_NO",
+            "state":"ORDER_STATE_OPEN",
+            "createTime":"2026-08-31T01:00:00Z"
+        }]}"#;
+        let parsed: GetOpenOrdersResponse = serde_json::from_str(json).expect("documented shape parses");
+        let o = &parsed.orders[0];
+        assert_eq!(o.id, "ord_123");
+        assert_eq!(o.market_slug, "cpc-btc-above-yr-12-31-2026-200k");
+        assert_eq!(o.side, Some(OrderSideDirection::Buy));
+        assert_eq!(o.outcome_side, Some(OutcomeSide::No));
+        assert_eq!(o.price.as_ref().unwrap().value, "0.93");
+        assert_eq!(o.quantity, 8.6);
+        assert_eq!(o.cum_quantity, 1.6);
+        assert_eq!(o.tif, Some(TimeInForce::GoodTillCancel));
+        assert_eq!(o.intent, Some(OrderIntent::BuyShort));
+    }
+
+    /// An unknown enum value must NOT fail the response.
+    ///
+    /// The caller cancels leftover orders at startup. A parse failure there leaves
+    /// real orders working on the venue with nothing managing them, so one
+    /// unrecognized value degrading to `Unknown` is much the lesser harm.
+    #[test]
+    fn an_unknown_enum_value_does_not_fail_the_response() {
+        let json = r#"{"orders":[{
+            "id":"ord_future",
+            "marketSlug":"some-market",
+            "side":"ORDER_SIDE_SOMETHING_NEW",
+            "outcomeSide":"OUTCOME_SIDE_MAYBE",
+            "intent":"ORDER_INTENT_WHATEVER",
+            "quantity":1.0
+        }]}"#;
+        let parsed: GetOpenOrdersResponse = serde_json::from_str(json).expect("unknown values tolerated");
+        let o = &parsed.orders[0];
+        assert_eq!(o.id, "ord_future", "the id still arrives, which is what cancel needs");
+        assert_eq!(o.side, Some(OrderSideDirection::Unknown));
+        assert_eq!(o.outcome_side, Some(OutcomeSide::Unknown));
+        assert_eq!(o.intent, Some(OrderIntent::Unknown));
+    }
+
+    /// Absent optional fields are absent, not errors.
+    #[test]
+    fn a_sparse_order_parses() {
+        let parsed: GetOpenOrdersResponse =
+            serde_json::from_str(r#"{"orders":[{"id":"ord_min"}]}"#).expect("sparse order parses");
+        let o = &parsed.orders[0];
+        assert_eq!(o.id, "ord_min");
+        assert!(o.price.is_none());
+        assert!(o.tif.is_none());
+        assert_eq!(o.quantity, 0.0);
+    }
+
+    /// An empty list is an empty list, and must not be confused with a failure.
+    #[test]
+    fn an_empty_response_parses() {
+        let parsed: GetOpenOrdersResponse =
+            serde_json::from_str(r#"{"orders":[]}"#).expect("empty parses");
+        assert!(parsed.orders.is_empty());
     }
 }
