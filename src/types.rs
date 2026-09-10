@@ -855,7 +855,11 @@ mod tests {
     /// as if the fee did not exist — which is the defect this field fixes.
     #[test]
     fn an_absent_or_null_fee_coefficient_is_none_not_zero() {
-        for body in [r#"{}"#, r#"{"feeCoefficient":null}"#, r#"{"feeCoefficient":""}"#] {
+        for body in [
+            r#"{}"#,
+            r#"{"feeCoefficient":null}"#,
+            r#"{"feeCoefficient":""}"#,
+        ] {
             let market: UsMarket =
                 serde_json::from_str(body).unwrap_or_else(|err| panic!("{body}: {err}"));
             assert_eq!(market.fee_coefficient, None, "{body}");
@@ -870,9 +874,12 @@ mod tests {
     /// not a silent `None` — the same rule `json_encoded_array` applies.
     #[test]
     fn an_unreadable_fee_coefficient_is_an_error_not_a_silent_none() {
-        for body in [r#"{"feeCoefficient":"six percent"}"#, r#"{"feeCoefficient":[0.06]}"#, r#"{"feeCoefficient":{"value":0.06}}"#] {
-            serde_json::from_str::<UsMarket>(body)
-                .expect_err(&format!("{body} should fail"));
+        for body in [
+            r#"{"feeCoefficient":"six percent"}"#,
+            r#"{"feeCoefficient":[0.06]}"#,
+            r#"{"feeCoefficient":{"value":0.06}}"#,
+        ] {
+            serde_json::from_str::<UsMarket>(body).expect_err(&format!("{body} should fail"));
         }
     }
 }
@@ -899,7 +906,8 @@ mod open_order_tests {
             "state":"ORDER_STATE_OPEN",
             "createTime":"2026-08-31T01:00:00Z"
         }]}"#;
-        let parsed: GetOpenOrdersResponse = serde_json::from_str(json).expect("documented shape parses");
+        let parsed: GetOpenOrdersResponse =
+            serde_json::from_str(json).expect("documented shape parses");
         let o = &parsed.orders[0];
         assert_eq!(o.id, "ord_123");
         assert_eq!(o.market_slug, "cpc-btc-above-yr-12-31-2026-200k");
@@ -927,9 +935,13 @@ mod open_order_tests {
             "intent":"ORDER_INTENT_WHATEVER",
             "quantity":1.0
         }]}"#;
-        let parsed: GetOpenOrdersResponse = serde_json::from_str(json).expect("unknown values tolerated");
+        let parsed: GetOpenOrdersResponse =
+            serde_json::from_str(json).expect("unknown values tolerated");
         let o = &parsed.orders[0];
-        assert_eq!(o.id, "ord_future", "the id still arrives, which is what cancel needs");
+        assert_eq!(
+            o.id, "ord_future",
+            "the id still arrives, which is what cancel needs"
+        );
         assert_eq!(o.side, Some(OrderSideDirection::Unknown));
         assert_eq!(o.outcome_side, Some(OutcomeSide::Unknown));
         assert_eq!(o.intent, Some(OrderIntent::Unknown));
@@ -938,10 +950,9 @@ mod open_order_tests {
     /// A price missing its currency must not fail the response.
     #[test]
     fn a_price_without_a_currency_parses() {
-        let parsed: GetOpenOrdersResponse = serde_json::from_str(
-            r#"{"orders":[{"id":"ord_px","price":{"value":"0.42"}}]}"#,
-        )
-        .expect("a partial price must not fail the whole response");
+        let parsed: GetOpenOrdersResponse =
+            serde_json::from_str(r#"{"orders":[{"id":"ord_px","price":{"value":"0.42"}}]}"#)
+                .expect("a partial price must not fail the whole response");
         let price = parsed.orders[0].price.as_ref().unwrap();
         assert_eq!(price.value, "0.42");
         assert_eq!(price.currency, "");
