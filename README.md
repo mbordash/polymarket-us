@@ -29,7 +29,7 @@ Or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-polymarket-us = "0.8"
+polymarket-us = "0.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -37,6 +37,24 @@ Requires Rust 1.86 or newer. TLS is provided by [rustls](https://github.com/rust
 so no OpenSSL installation is needed. Root certificates come from the platform
 verifier, which means the trust store the rest of the machine already uses — no
 bundled root set to go stale.
+
+## What is new in 0.9
+
+`UsMarket` gains **`fee_coefficient: Option<f64>`**, read from the gateway's
+`feeCoefficient`. Polymarket US charges a taker fee of
+`Θ × contracts × price × (1 − price)` on every fill that crosses the spread, and
+pays a maker rebate of `−0.0125` on the same formula, per fill. The gateway
+publishes Θ on every market record (`0.06` exchange-wide as of the July 2026
+schedule) and earlier versions of this crate discarded it, so a consumer pricing
+an entry against the fee had nothing to read.
+
+The field is `None` when the gateway sends no coefficient — deliberately not
+zero, because zero is a real value meaning a free market. A number arrives as a
+JSON number or a numeric string, like this gateway's other numeric fields; any
+other shape is an error rather than a silent `None`.
+
+Adding a public field to `UsMarket` breaks struct-literal construction of it,
+which is why this is 0.9 and not 0.8.1.
 
 ## Migrating from 0.6 to 0.8
 

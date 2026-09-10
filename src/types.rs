@@ -213,6 +213,28 @@ pub struct UsMarket {
         deserialize_with = "json_encoded_array"
     )]
     pub outcome_prices: Vec<String>,
+    /// The market's taker fee coefficient Θ, from the gateway's `feeCoefficient`.
+    ///
+    /// Polymarket US charges `Θ × contracts × p × (1 − p)` on every taker fill
+    /// (docs.polymarket.us/fees: Θ = 0.06 exchange-wide since 2026-07-01, a
+    /// maker rebate of −0.0125 paid per fill). The gateway publishes it on every
+    /// market record, and this crate used to drop it on deserialization — so a
+    /// consumer pricing an entry against the fee had nothing to read and, in
+    /// at least one case, assumed the venue was free.
+    ///
+    /// `None` when the gateway sent no coefficient (absent or `null`). A
+    /// missing figure is deliberately NOT zero: zero is a real value meaning a
+    /// free market, and a consumer must fall back to the published schedule
+    /// rather than to "no fee". A number is accepted as either a JSON number or
+    /// a numeric string, since this gateway sends the same quantity both ways
+    /// (`volume` / `volumeNum`); anything else is an error rather than a
+    /// silent `None`.
+    #[serde(
+        default,
+        rename = "feeCoefficient",
+        deserialize_with = "optional_number"
+    )]
+    pub fee_coefficient: Option<f64>,
 }
 
 impl UsMarket {
@@ -267,6 +289,41 @@ fn render_scalar(value: serde_json::Value) -> String {
     match value {
         serde_json::Value::String(text) => text,
         other => other.to_string(),
+    }
+}
+
+/// Deserialize a number the gateway may send as a JSON number, a numeric
+/// string, `null`, or not at all.
+///
+/// Absent and `null` both become `None`; a number or a string that parses as
+/// one becomes `Some`. A string that does not parse — or any other JSON type —
+/// is an error, for the same reason [`json_encoded_array`] rejects a malformed
+/// encoding: a value the gateway sent and this crate could not read must not
+/// quietly turn into "not sent".
+fn optional_number<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Number {
+        Float(f64),
+        Text(String),
+    }
+
+    match Option::<Number>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(Number::Float(value)) => Ok(Some(value)),
+        Some(Number::Text(raw)) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            trimmed
+                .parse::<f64>()
+                .map(Some)
+                .map_err(|err| serde::de::Error::custom(format!("not a number: {raw:?} ({err})")))
+        }
     }
 }
 
@@ -771,6 +828,52 @@ mod tests {
         let market: UsMarket = serde_json::from_str(json).expect("deserialize");
         assert_eq!(market.market_sides.len(), 1);
         assert_eq!(market.market_sides[0].identifier, "");
+    }
+
+    /// The shape the gateway actually sends (checked live 2026-09-09 across
+    /// sports, crypto and politics markets, open and resolved: `0.06` on every
+    /// one). It arrived on every market record and was dropped by this crate.
+    #[test]
+    fn the_fee_coefficient_is_read_from_the_gateway_record() {
+        let market: UsMarket = serde_json::from_str(
+            r#"{"slug":"cpc-btc-100k-09-30-2026","feeCoefficient":0.06,"orderPriceMinTickSize":0.001}"#,
+        )
+        .expect("should deserialize");
+        assert_eq!(market.fee_coefficient, Some(0.06));
+    }
+
+    /// A numeric string is the other spelling this gateway uses for numbers.
+    #[test]
+    fn the_fee_coefficient_accepts_a_numeric_string() {
+        let market: UsMarket =
+            serde_json::from_str(r#"{"feeCoefficient":"0.06"}"#).expect("should deserialize");
+        assert_eq!(market.fee_coefficient, Some(0.06));
+    }
+
+    /// Missing is `None`, never zero: zero would read as a free market, and a
+    /// consumer that cannot tell "free" from "not told" would price its entries
+    /// as if the fee did not exist — which is the defect this field fixes.
+    #[test]
+    fn an_absent_or_null_fee_coefficient_is_none_not_zero() {
+        for body in [r#"{}"#, r#"{"feeCoefficient":null}"#, r#"{"feeCoefficient":""}"#] {
+            let market: UsMarket =
+                serde_json::from_str(body).unwrap_or_else(|err| panic!("{body}: {err}"));
+            assert_eq!(market.fee_coefficient, None, "{body}");
+        }
+        // And an explicit zero is a real value that survives as one.
+        let free: UsMarket =
+            serde_json::from_str(r#"{"feeCoefficient":0}"#).expect("should deserialize");
+        assert_eq!(free.fee_coefficient, Some(0.0));
+    }
+
+    /// A coefficient the gateway sent but this crate cannot read is an error,
+    /// not a silent `None` — the same rule `json_encoded_array` applies.
+    #[test]
+    fn an_unreadable_fee_coefficient_is_an_error_not_a_silent_none() {
+        for body in [r#"{"feeCoefficient":"six percent"}"#, r#"{"feeCoefficient":[0.06]}"#, r#"{"feeCoefficient":{"value":0.06}}"#] {
+            serde_json::from_str::<UsMarket>(body)
+                .expect_err(&format!("{body} should fail"));
+        }
     }
 }
 
