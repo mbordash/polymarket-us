@@ -29,7 +29,7 @@ Or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-polymarket-us = "0.9"
+polymarket-us = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -37,6 +37,52 @@ Requires Rust 1.86 or newer. TLS is provided by [rustls](https://github.com/rust
 so no OpenSSL installation is needed. Root certificates come from the platform
 verifier, which means the trust store the rest of the machine already uses — no
 bundled root set to go stale.
+
+## What is new in 0.10
+
+**`bbo()` and `order_book()` returned an empty book on every call before this
+release, and reported success while doing it.** If you depend on either, upgrade;
+if you built around their output, you were reading nothing.
+
+The three market-data types were shaped from the REST reference rather than from
+a captured response, and the gateway sends something different. Both payloads
+arrive wrapped in a `marketData` object, the quote fields are `bestBid` and
+`bestAsk` rather than `bid` and `ask`, the sell side of the book is `offers`
+rather than `asks`, and a level is `{"px": Money, "qty": String}` rather than
+`{"price": String, "quantity": String}`. Every field carried
+`#[serde(default)]`, so none of those mismatches produced an error: the response
+deserialized into empty vectors and `None` quotes, which a caller cannot tell
+apart from a market with nothing resting on it.
+
+```rust
+// before: compiled, returned 200, always empty
+let bbo = client.markets().bbo(&slug).await?;
+bbo.bid.map(|l| l.price);            // always None
+
+// now
+let bbo = client.markets().bbo(&slug).await?;
+bbo.best_bid.map(|m| m.value);       // Some("0.2300")
+bbo.state;                           // "MARKET_STATE_OPEN"
+
+let book = client.markets().order_book(&slug).await?;
+book.offers.first().map(|l| &l.px.value);   // was book.asks / l.price
+```
+
+`BestBidOffer` also now carries `market_slug`, `bid_shares`, `ask_shares` and
+`state`. Check `state` before reading an absent side as a thin book: an expired
+market sends `null` for both, and that stays `None` rather than becoming a zero,
+because a zero bid reads as a real price to anything pricing an exit.
+
+The unit tests passed throughout, because their fixtures were hand-written to
+match the types instead of captured from the server. Those fixtures are now real
+payloads, and `tests/market_data_shape.rs` asks the gateway directly:
+
+```
+cargo test --test market_data_shape -- --ignored --nocapture
+```
+
+It needs credentials, and it is the only check that can fail when the types and
+the gateway drift apart. Run it before publishing.
 
 ## What is new in 0.9
 
@@ -130,7 +176,7 @@ CI: every push compiles *and* runs the test suite on exactly that toolchain.
 
 It is a tracked floor rather than a support promise. It follows what the
 dependency tree requires, and **may rise in any minor release** — it is not
-treated as a breaking change. Pin `polymarket-us = "=0.8.0"` if you need a
+treated as a breaking change. Pin `polymarket-us = "=0.10.0"` if you need a
 toolchain guarantee.
 
 In practice the floor moves rarely and only for a reason. The crate uses Cargo's
@@ -199,10 +245,18 @@ let markets = client.markets().list().await?;
 let query = [("limit", "10"), ("category", "politics")];
 let page = client.markets().list_with_query(&query).await?;
 
-// Order book and pricing
-let book = client.markets().order_book("BTC-USD").await?;
-let bbo = client.markets().bbo("BTC-USD").await?;           // Best bid/offer
-let settlement = client.markets().settlement_price("BTC-USD").await?;
+// Order book and pricing. These take the market SLUG, as `UsMarket.slug`
+// carries it — not a ticker like "BTC-USD".
+let slug = "tsc-setkamecz-krajan-veiluk-2026-10-03-st-4pt5";
+let book = client.markets().order_book(slug).await?;        // bids / offers
+let bbo = client.markets().bbo(slug).await?;                // best_bid / best_ask
+let settlement = client.markets().settlement_price(slug).await?;
+
+// A side is None when nothing rests there, which is not a price of zero.
+// `state` distinguishes a thin book from a closed market.
+if let Some(bid) = bbo.best_bid.as_ref() {
+    println!("{slug} [{}] best bid {}", bbo.state, bid.value);
+}
 ```
 
 ### Events

@@ -671,26 +671,85 @@ pub struct UsEvent {
 }
 
 // Market data helpers
+//
+// These three types are shaped from captured gateway responses, not from the
+// REST reference. Before 0.9.0 they were written to a plausible shape that the
+// gateway does not send: root-level `bid`/`ask` and `bids`/`asks`, with levels
+// keyed `price`/`quantity`. Every field was `#[serde(default)]`, so `bbo()` and
+// `order_book()` returned HTTP 200 and deserialized to entirely empty values
+// rather than failing — a silent empty book at every price, indistinguishable
+// from a market with no resting orders. The unit tests passed because their
+// fixtures were hand-written to the same invented shape.
+//
+// What `GET /v1/markets/{slug}/bbo` actually returns:
+//
+// ```json
+// {"marketData": {"marketSlug": "...", "bestBid": {"value": "0.2300", "currency": "USD"},
+//                 "bestAsk": {"value": "0.7700", "currency": "USD"},
+//                 "bidShares": "0", "askShares": "0", "state": "MARKET_STATE_OPEN", ...}}
+// ```
+//
+// and `GET /v1/markets/{slug}/book`:
+//
+// ```json
+// {"marketData": {"bids": [{"px": {"value": "0.2300", "currency": "USD"}, "qty": "8.7600"}],
+//                 "offers": [...], "state": "MARKET_STATE_OPEN", ...}}
+// ```
+//
+// Note `offers`, not `asks`, and that a price is a `Money` rather than a bare
+// string. Both payloads arrive wrapped in `marketData`, which `MarketDataEnvelope`
+// unwraps so callers still receive the inner type.
+
+/// Unwraps the `marketData` object both market-data endpoints wrap their
+/// payload in. Internal: callers receive the inner `T`.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct MarketDataEnvelope<T> {
+    #[serde(rename = "marketData")]
+    pub(crate) market_data: T,
+}
+
+/// One resting level: a price and the shares available at it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PriceLevel {
+    /// The level's price. `Money`, not a bare string.
+    pub px: Money,
+    /// Shares resting at this level, as a decimal string.
+    #[serde(default)]
+    pub qty: String,
+}
+
+/// `GET /v1/markets/{slug}/book` — the L2 book for one market.
 #[derive(Debug, Clone, Deserialize)]
 pub struct OrderBook {
     #[serde(default)]
     pub bids: Vec<PriceLevel>,
+    /// The sell side. The gateway calls these `offers`.
     #[serde(default)]
-    pub asks: Vec<PriceLevel>,
+    pub offers: Vec<PriceLevel>,
+    /// e.g. `MARKET_STATE_OPEN`, `MARKET_STATE_EXPIRED`. Worth checking before
+    /// reading an empty book as thin rather than closed.
+    #[serde(default)]
+    pub state: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PriceLevel {
-    pub price: String,
-    pub quantity: String,
-}
-
+/// `GET /v1/markets/{slug}/bbo` — top of book for one market.
+///
+/// `None` means no resting order on that side, which is different from a price
+/// of zero. Check `state` before treating an absent side as a thin book.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BestBidOffer {
+    #[serde(rename = "marketSlug", default)]
+    pub market_slug: String,
+    #[serde(rename = "bestBid", default)]
+    pub best_bid: Option<Money>,
+    #[serde(rename = "bestAsk", default)]
+    pub best_ask: Option<Money>,
+    #[serde(rename = "bidShares", default)]
+    pub bid_shares: String,
+    #[serde(rename = "askShares", default)]
+    pub ask_shares: String,
     #[serde(default)]
-    pub bid: Option<PriceLevel>,
-    #[serde(default)]
-    pub ask: Option<PriceLevel>,
+    pub state: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

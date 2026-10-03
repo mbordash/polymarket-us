@@ -29,10 +29,18 @@ async fn main() -> Result<(), PolymarketUsError> {
     if let Some(first) = markets.markets.first() {
         let book = client.markets().order_book(&first.slug).await?;
         println!(
-            "book for {}: {} bids / {} asks",
+            "book for {} [{}]: {} bids / {} offers",
             first.slug,
+            book.state,
             book.bids.len(),
-            book.asks.len()
+            book.offers.len()
+        );
+        // Top of book, where an absent side is None rather than a zero price.
+        let bbo = client.markets().bbo(&first.slug).await?;
+        println!(
+            "  best bid {} / best ask {}",
+            bbo.best_bid.as_ref().map_or("-", |m| m.value.as_str()),
+            bbo.best_ask.as_ref().map_or("-", |m| m.value.as_str()),
         );
     }
 

@@ -50,8 +50,10 @@ impl<'a> MarketsClient<'a> {
 
     /// Get order book for a market
     pub async fn order_book(&self, symbol: &str) -> Result<types::OrderBook, PolymarketUsError> {
+        // The gateway wraps both market-data payloads in `marketData`; unwrap it
+        // so callers keep receiving the book itself.
         self.client
-            .internal_request::<(), (), types::OrderBook>(
+            .internal_request::<(), (), types::MarketDataEnvelope<types::OrderBook>>(
                 Method::GET,
                 &format!("/v1/markets/{symbol}/book"),
                 None,
@@ -59,12 +61,13 @@ impl<'a> MarketsClient<'a> {
                 false,
             )
             .await
+            .map(|envelope| envelope.market_data)
     }
 
     /// Get best bid/offer for a market
     pub async fn bbo(&self, symbol: &str) -> Result<types::BestBidOffer, PolymarketUsError> {
         self.client
-            .internal_request::<(), (), types::BestBidOffer>(
+            .internal_request::<(), (), types::MarketDataEnvelope<types::BestBidOffer>>(
                 Method::GET,
                 &format!("/v1/markets/{symbol}/bbo"),
                 None,
@@ -72,6 +75,7 @@ impl<'a> MarketsClient<'a> {
                 false,
             )
             .await
+            .map(|envelope| envelope.market_data)
     }
 
     /// Get settlement price for a market
@@ -706,33 +710,96 @@ mod tests {
         assert!(json.contains("200"));
     }
 
+    /// Captured from the gateway on 2026-10-02, not hand-written.
+    ///
+    /// The previous fixtures were invented to match the types rather than the
+    /// server: `{"bids": [{"price": ..., "quantity": ...}]}` with no
+    /// `marketData` envelope. They passed against the wrong types, which is
+    /// precisely why `bbo()` and `order_book()` shipped returning empty books on
+    /// every call. Keep these payloads verbatim; shorten them only by dropping
+    /// whole fields, never by renaming one.
+    const BOOK_JSON: &str = r#"{"marketData":{"marketSlug":"tsc-setkamecz-krajan-veiluk-2026-10-03-st-4pt5","bids":[{"px":{"value":"0.2300","currency":"USD"},"qty":"8.7600"}],"offers":[{"px":{"value":"0.7700","currency":"USD"},"qty":"12.0000"}],"state":"MARKET_STATE_OPEN","transactTime":"2026-10-02T20:10:00Z"}}"#;
+
+    const BBO_JSON: &str = r#"{"marketData":{"marketSlug":"tsc-setkamecz-krajan-veiluk-2026-10-03-st-4pt5","currentPx":null,"lastTradePx":null,"bestAsk":{"value":"0.7700","currency":"USD"},"bestBid":{"value":"0.2300","currency":"USD"},"askDepth":1,"bidDepth":1,"state":"MARKET_STATE_OPEN","bidShares":"8.7600","askShares":"12.0000"}}"#;
+
     #[test]
     fn order_book_deserializes() {
-        let json = r#"{"bids": [{"price": "0.50", "quantity": "100"}], "asks": [{"price": "0.55", "quantity": "150"}]}"#;
-        let book: types::OrderBook = serde_json::from_str(json).expect("should deserialize");
+        let env: types::MarketDataEnvelope<types::OrderBook> =
+            serde_json::from_str(BOOK_JSON).expect("should deserialize");
+        let book = env.market_data;
         assert_eq!(book.bids.len(), 1);
-        assert_eq!(book.asks.len(), 1);
-        assert_eq!(book.bids[0].price, "0.50");
+        assert_eq!(book.offers.len(), 1);
+        assert_eq!(book.bids[0].px.value, "0.2300");
+        assert_eq!(book.bids[0].px.currency, "USD");
+        assert_eq!(book.bids[0].qty, "8.7600");
+        assert_eq!(book.offers[0].px.value, "0.7700");
+        assert_eq!(book.state, "MARKET_STATE_OPEN");
     }
 
     #[test]
     fn best_bid_offer_deserializes() {
-        let json = r#"{"bid": {"price": "0.50", "quantity": "100"}, "ask": {"price": "0.55", "quantity": "150"}}"#;
-        let bbo: types::BestBidOffer = serde_json::from_str(json).expect("should deserialize");
-        assert!(bbo.bid.is_some());
-        assert!(bbo.ask.is_some());
-        assert_eq!(bbo.bid.unwrap().price, "0.50");
+        let env: types::MarketDataEnvelope<types::BestBidOffer> =
+            serde_json::from_str(BBO_JSON).expect("should deserialize");
+        let bbo = env.market_data;
+        assert_eq!(
+            bbo.best_bid.as_ref().map(|m| m.value.as_str()),
+            Some("0.2300")
+        );
+        assert_eq!(
+            bbo.best_ask.as_ref().map(|m| m.value.as_str()),
+            Some("0.7700")
+        );
+        assert_eq!(bbo.bid_shares, "8.7600");
+        assert_eq!(bbo.state, "MARKET_STATE_OPEN");
+    }
+
+    /// An expired market sends `null` for both sides, and that must stay `None`
+    /// rather than becoming a zero price: a zero bid reads as a real price to
+    /// anything pricing an exit.
+    #[test]
+    fn an_absent_side_stays_none() {
+        let json = r#"{"marketData":{"marketSlug":"aec-nfl-lac-ten-2025-11-02","bestBid":null,"bestAsk":null,"bidShares":"0","askShares":"0","state":"MARKET_STATE_EXPIRED"}}"#;
+        let env: types::MarketDataEnvelope<types::BestBidOffer> =
+            serde_json::from_str(json).expect("should deserialize");
+        let bbo = env.market_data;
+        assert!(
+            bbo.best_bid.is_none(),
+            "a null side must not become a price"
+        );
+        assert!(bbo.best_ask.is_none());
+        assert_eq!(bbo.state, "MARKET_STATE_EXPIRED");
+    }
+
+    /// The failure that shipped: the old shape must no longer silently succeed.
+    ///
+    /// Every field was `#[serde(default)]`, so a payload the gateway never sends
+    /// deserialized into an empty book and the caller could not tell. A missing
+    /// envelope is now an error instead of an empty answer.
+    #[test]
+    fn the_invented_shape_is_rejected_rather_than_emptied() {
+        let old = r#"{"bid": {"price": "0.50", "quantity": "100"}, "ask": {"price": "0.55", "quantity": "150"}}"#;
+        assert!(
+            serde_json::from_str::<types::MarketDataEnvelope<types::BestBidOffer>>(old).is_err(),
+            "a payload without marketData must fail, not parse as an empty book",
+        );
     }
 
     #[test]
     fn price_level_serializes() {
         let level = types::PriceLevel {
-            price: "0.55".to_string(),
-            quantity: "200".to_string(),
+            px: types::Money {
+                value: "0.55".to_string(),
+                currency: "USD".to_string(),
+            },
+            qty: "200".to_string(),
         };
         let json = serde_json::to_string(&level).expect("should serialize");
         assert!(json.contains("0.55"));
         assert!(json.contains("200"));
+        assert!(
+            json.contains("px"),
+            "the gateway's field name is px, not price"
+        );
     }
 
     #[test]
