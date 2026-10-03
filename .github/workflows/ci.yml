@@ -13,6 +13,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Read-only by default. A job that needs more says so, which keeps the blast
+# radius of a compromised action to the job that asked for the scope.
+permissions:
+  contents: read
+
 jobs:
   check:
     name: Compile & Lint
@@ -149,6 +154,15 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    # `rustsec/audit-check` reports findings by creating a check run, which the
+    # Checks API refuses without `checks: write` — the failure reads
+    # "Resource not accessible by integration" and looks like a broken action
+    # rather than a missing scope. `issues: write` lets it open an advisory
+    # issue on the scheduled run, where there is no pull request to annotate.
+    permissions:
+      contents: read
+      checks: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: rustsec/audit-check@v2
