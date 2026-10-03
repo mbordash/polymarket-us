@@ -290,14 +290,35 @@ impl PolymarketUsClient {
             if let Some(b) = body {
                 rb = rb.json(b);
             }
-            if authenticated {
-                let auth = self
-                    .auth
-                    .as_ref()
-                    .ok_or(PolymarketUsError::MissingAuth("authenticated endpoint"))?;
-                for (name, value) in auth.signed_headers(method.as_str(), path) {
-                    rb = rb.header(name, value);
+            // Sign whenever credentials exist, not only on endpoints flagged as
+            // authenticated.
+            //
+            // `authenticated` selects the base URL, and the market-data calls
+            // pass `false` because the gateway host serves them unsigned. That
+            // holds only while the two base URLs differ. A consumer that models
+            // the venue as ONE configurable endpoint — the natural shape when
+            // the host must be switchable for staging — points both at the
+            // authenticated host, and then every `false` call sends an unsigned
+            // request to a host that requires signing. It comes back 401
+            // "Missing required API key headers", which reads as a credential
+            // problem rather than a base-URL one.
+            //
+            // Signing is safe on both hosts: the gateway answers 200 signed or
+            // unsigned, and the API answers 200 only signed. So the only
+            // behaviour that changes is an unsigned call made WITH credentials
+            // available, which now succeeds where it could previously 401. A
+            // client built without credentials is untouched and still reaches
+            // the gateway unsigned.
+            match self.auth.as_ref() {
+                Some(auth) => {
+                    for (name, value) in auth.signed_headers(method.as_str(), path) {
+                        rb = rb.header(name, value);
+                    }
                 }
+                None if authenticated => {
+                    return Err(PolymarketUsError::MissingAuth("authenticated endpoint"));
+                }
+                None => {}
             }
 
             // --- Send request, retry on transport errors for idempotent calls ---
@@ -441,6 +462,41 @@ fn extract_error_message(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Credentials are used when present, whatever the endpoint flag says.
+    ///
+    /// `authenticated` selects the base URL. It used to gate signing as well,
+    /// which broke any consumer that points both base URLs at the authenticated
+    /// host: market-data calls pass `false`, so they went out unsigned and came
+    /// back 401 "Missing required API key headers". Signing is accepted on both
+    /// hosts, so the only case that changes is an unflagged call made with
+    /// credentials available.
+    #[test]
+    fn credentials_are_used_whenever_they_exist() {
+        let auth = UsAuth::from_parts(
+            "test-key".to_string(),
+            // 32 zero bytes, base64: a valid ed25519 seed.
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .expect("seed parses");
+
+        // With credentials, both flags produce signed headers.
+        for method_path in [
+            ("GET", "/v1/markets/x/bbo"),
+            ("GET", "/v1/account/balances"),
+        ] {
+            let headers = auth.signed_headers(method_path.0, method_path.1);
+            assert_eq!(headers.len(), 3, "access key, timestamp and signature");
+            assert!(headers
+                .iter()
+                .any(|(n, _)| *n == crate::auth::HEADER_SIGNATURE));
+        }
+
+        // Without credentials, an authenticated endpoint must still refuse
+        // rather than send an unsigned request that will 401 downstream.
+        let anon = PolymarketUsClient::builder().build().expect("builds");
+        assert!(anon.auth().is_none(), "no credentials configured");
+    }
 
     #[test]
     fn builder_defaults_match_public_endpoints() {
