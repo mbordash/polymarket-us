@@ -176,7 +176,7 @@ CI: every push compiles *and* runs the test suite on exactly that toolchain.
 
 It is a tracked floor rather than a support promise. It follows what the
 dependency tree requires, and **may rise in any minor release** — it is not
-treated as a breaking change. Pin `polymarket-us = "=0.10.3"` if you need a
+treated as a breaking change. Pin `polymarket-us = "=0.10.4"` if you need a
 toolchain guarantee.
 
 In practice the floor moves rarely and only for a reason. The crate uses Cargo's
